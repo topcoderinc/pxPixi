@@ -1,0 +1,4593 @@
+diff --git a/src/core/autoDetectRenderer.js b/src/core/autoDetectRenderer.js
+index 89604256..d8b03a57 100644
+--- a/src/core/autoDetectRenderer.js
++++ b/src/core/autoDetectRenderer.js
+@@ -1,6 +1,7 @@
+ import * as utils from './utils';
+ import CanvasRenderer from './renderers/canvas/CanvasRenderer';
+ import WebGLRenderer from './renderers/webgl/WebGLRenderer';
++import PXSceneRenderer from './renderers/pxscene/PXSceneRenderer';
+ 
+ /**
+  * This helper function will automatically detect which renderer you should be using.
+@@ -19,10 +20,15 @@ import WebGLRenderer from './renderers/webgl/WebGLRenderer';
+  *      need to call toDataUrl on the webgl context
+  * @param {number} [options.resolution=1] - The resolution / device pixel ratio of the renderer, retina would be 2
+  * @param {boolean} [noWebGL=false] - prevents selection of WebGL renderer, even if such is present
+- * @return {PIXI.WebGLRenderer|PIXI.CanvasRenderer} Returns WebGL renderer if available, otherwise CanvasRenderer
++ * @return {PIXI.WebGLRenderer|PIXI.CanvasRenderer|PIXI.PXSceneRenderer} Returns the detected renderer
+  */
+ export function autoDetectRenderer(width = 800, height = 600, options, noWebGL)
+ {
++    if (utils.isV8())
++    {
++        return new PXSceneRenderer(width, height, options);
++    }
++
+     if (!noWebGL && utils.isWebGLSupported())
+     {
+         return new WebGLRenderer(width, height, options);
+diff --git a/src/core/const.js b/src/core/const.js
+index f9235e4c..4d29a35d 100644
+--- a/src/core/const.js
++++ b/src/core/const.js
+@@ -50,11 +50,13 @@ export const DEG_TO_RAD = Math.PI / 180;
+  * @property {number} UNKNOWN - Unknown render type.
+  * @property {number} WEBGL - WebGL render type.
+  * @property {number} CANVAS - Canvas render type.
++ * @property {number} PXSCENE - PXScene render type.
+  */
+ export const RENDERER_TYPE = {
+     UNKNOWN:    0,
+     WEBGL:      1,
+     CANVAS:     2,
++    PXSCENE:    3,
+ };
+ 
+ /**
+diff --git a/src/core/display/Container.js b/src/core/display/Container.js
+index ed8cd5f3..e063988c 100644
+--- a/src/core/display/Container.js
++++ b/src/core/display/Container.js
+@@ -500,6 +500,17 @@ export default class Container extends DisplayObject
+     }
+ 
+     /**
++     * To be overridden by the subclass
++     *
++     * @private
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    _renderPXScene(renderer) // eslint-disable-line no-unused-vars
++    {
++        // this is where content itself gets rendered...
++    }
++
++    /**
+      * Renders the object using the Canvas renderer
+      *
+      * @param {PIXI.CanvasRenderer} renderer - The renderer
+@@ -530,6 +541,26 @@ export default class Container extends DisplayObject
+     }
+ 
+     /**
++     * Renders the object using the PXScene renderer
++     *
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    renderPXScene(renderer)
++    {
++        // if not visible or the alpha is 0 then no need to render this
++        if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
++        {
++            return;
++        }
++
++        this._renderPXScene(renderer);
++        for (let i = 0, j = this.children.length; i < j; ++i)
++        {
++            this.children[i].renderPXScene(renderer);
++        }
++    }
++
++    /**
+      * Removes all internal references and listeners as well as removes children from the display list.
+      * Do not use a Container after calling `destroy`.
+      *
+diff --git a/src/core/display/DisplayObject.js b/src/core/display/DisplayObject.js
+index 4e6c77d0..d49d1517 100644
+--- a/src/core/display/DisplayObject.js
++++ b/src/core/display/DisplayObject.js
+@@ -331,6 +331,16 @@ export default class DisplayObject extends EventEmitter
+     }
+ 
+     /**
++     * Renders the object using the PXScene renderer
++     *
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    renderPXScene(renderer) // eslint-disable-line no-unused-vars
++    {
++        // OVERWRITE;
++    }
++
++    /**
+      * Set the parent Container of this DisplayObject
+      *
+      * @param {PIXI.Container} container - The Container to add this DisplayObject to
+diff --git a/src/core/index.js b/src/core/index.js
+index f03fe153..6417d44f 100644
+--- a/src/core/index.js
++++ b/src/core/index.js
+@@ -9,8 +9,9 @@ import * as ticker from './ticker';
+ import settings from './settings';
+ import CanvasRenderer from './renderers/canvas/CanvasRenderer';
+ import WebGLRenderer from './renderers/webgl/WebGLRenderer';
++import PXSceneRenderer from './renderers/pxscene/PXSceneRenderer';
+ 
+-export { settings, utils, ticker, CanvasRenderer, WebGLRenderer };
++export { settings, utils, ticker, CanvasRenderer, WebGLRenderer, PXSceneRenderer };
+ 
+ export { default as glCore } from 'pixi-gl-core';
+ 
+@@ -22,10 +23,12 @@ export { default as TransformStatic } from './display/TransformStatic';
+ export { default as TransformBase } from './display/TransformBase';
+ export { default as Sprite } from './sprites/Sprite';
+ export { default as CanvasSpriteRenderer } from './sprites/canvas/CanvasSpriteRenderer';
++export { default as PXSceneSpriteRenderer } from './sprites/pxscene/PXSceneSpriteRenderer';
+ export { default as CanvasTinter } from './sprites/canvas/CanvasTinter';
+ export { default as SpriteRenderer } from './sprites/webgl/SpriteRenderer';
+ export { default as Text } from './text/Text';
+ export { default as TextStyle } from './text/TextStyle';
++export { default as PXSceneTextRenderer } from './text/pxscene/PXSceneTextRenderer';
+ export { default as Graphics } from './graphics/Graphics';
+ export { default as GraphicsData } from './graphics/GraphicsData';
+ export { default as GraphicsRenderer } from './graphics/webgl/GraphicsRenderer';
+diff --git a/src/core/renderers/pxscene/PXSceneRenderer.js b/src/core/renderers/pxscene/PXSceneRenderer.js
+new file mode 100644
+index 00000000..938e7e52
+--- /dev/null
++++ b/src/core/renderers/pxscene/PXSceneRenderer.js
+@@ -0,0 +1,233 @@
++import SystemRenderer from '../SystemRenderer';
++import { pluginTarget, hex2rgb, rgb2rgba, rgba2hex } from '../../utils';
++import { RENDERER_TYPE, SCALE_MODES } from '../../const';
++import settings from '../../settings';
++import CanvasRenderTarget from '../canvas/utils/CanvasRenderTarget';
++
++/**
++ * The PXSceneRenderer draws the scene and all its content onto a pxscene window.
++ *
++ * @class
++ * @memberof PIXI
++ * @extends PIXI.SystemRenderer
++ */
++export default class PXSceneRenderer extends SystemRenderer
++{
++    /**
++     * @param {number} [screenWidth=800] - the width of the screen
++     * @param {number} [screenHeight=600] - the height of the screen
++     * @param {object} [options] - The optional renderer parameters
++     * @param {HTMLCanvasElement} [options.view] - the canvas to use as a view, optional
++     * @param {number} [options.backgroundColor=0x000000] - The background color of the rendered area
++     *  (shown if not transparent).
++     */
++    constructor(screenWidth, screenHeight, options = {})
++    {
++        super('PXScene', screenWidth, screenHeight, options);
++
++        this.type = RENDERER_TYPE.PXSCENE;
++
++        let backgroundColor = 0;
++
++        if (typeof options.backgroundColor !== 'undefined')
++        {
++            backgroundColor = rgba2hex(rgb2rgba(hex2rgb(options.backgroundColor)));
++        }
++
++        /**
++         * The canvas 2d context that everything is drawn with.
++         *
++         * @member {rtObject}
++         */
++        this.rootContext = this.view.create({
++            t: 'rect',
++            w: screenWidth,
++            h: screenHeight,
++            parent: this.view.root,
++            clip: true,
++            fillColor: backgroundColor,
++        });
++
++        /**
++         * Boolean flag controlling view refresh.
++         *
++         * @member {boolean}
++         */
++        this.refresh = true;
++
++        this.initPlugins();
++    }
++
++    /**
++     * Renders the object to this view
++     *
++     * @param {PIXI.DisplayObject} displayObject - The object to be rendered
++     * @param {PIXI.RenderTexture} [renderTexture] - A render texture to be rendered to.
++     *  If unset, it will render to the root context.
++     * @param {boolean} [clear=false] - Whether to clear the canvas before drawing
++     * @param {PIXI.Transform} [transform] - A transformation to be applied
++     * @param {boolean} [skipUpdateTransform=false] - Whether to skip the update transform
++     */
++    render(displayObject, renderTexture, clear, transform, skipUpdateTransform)
++    {
++        if (!this.view)
++        {
++            return;
++        }
++
++        // can be handy to know!
++        this.renderingToScreen = !renderTexture;
++
++        this.emit('prerender');
++
++        const rootResolution = this.resolution;
++
++        if (renderTexture)
++        {
++            renderTexture = renderTexture.baseTexture || renderTexture;
++
++            if (!renderTexture._canvasRenderTarget)
++            {
++                renderTexture._canvasRenderTarget = new CanvasRenderTarget(
++                    renderTexture.width,
++                    renderTexture.height,
++                    renderTexture.resolution
++                );
++                renderTexture.source = renderTexture._canvasRenderTarget.canvas;
++                renderTexture.valid = true;
++            }
++
++            this.context = renderTexture._canvasRenderTarget.context;
++            this.resolution = renderTexture._canvasRenderTarget.resolution;
++        }
++        else
++        {
++            this.context = this.rootContext;
++        }
++
++        const context = this.context;
++
++        if (!renderTexture)
++        {
++            this._lastObjectRendered = displayObject;
++        }
++
++        if (!skipUpdateTransform)
++        {
++            const cacheParent = displayObject.parent;
++            const tempWt = this._tempDisplayObjectParent.transform.worldTransform;
++
++            if (transform)
++            {
++                transform.copy(tempWt);
++
++                this._tempDisplayObjectParent.transform._worldID = -1;
++            }
++            else
++            {
++                tempWt.identity();
++            }
++
++            displayObject.parent = this._tempDisplayObjectParent;
++
++            displayObject.updateTransform();
++            displayObject.parent = cacheParent;
++        }
++
++        const tempContext = this.context;
++
++        this.context = context;
++        displayObject.renderPXScene(this);
++        this.context = tempContext;
++
++        this.resolution = rootResolution;
++
++        this.emit('postrender');
++    }
++
++    /**
++     * Same as this.rootContext.w, actual number of pixels in the view by horizontal
++     *
++     * @member {number}
++     * @readonly
++     * @default 800
++     */
++    get width()
++    {
++        return this.rootContext.w;
++    }
++
++    /**
++     * Same as this.rootContext.h, actual number of pixels in the view by vertical
++     *
++     * @member {number}
++     * @readonly
++     * @default 600
++     */
++    get height()
++    {
++        return this.rootContext.h;
++    }
++
++    /**
++     * Clear the view of renderer.
++     *
++     * @param {string} [clearColor] - Clear the view with this color, except the view is transparent.
++     */
++    clear(clearColor)
++    {
++        const context = this.context;
++
++        clearColor = clearColor || this._backgroundColorString;
++
++        if (!this.transparent && clearColor)
++        {
++            context.fillStyle = clearColor;
++            context.fillRect(0, 0, this.width, this.height);
++        }
++        else
++        {
++            context.clearRect(0, 0, this.width, this.height);
++        }
++    }
++
++    /**
++     * Removes everything from the renderer.
++     *
++     */
++    destroy()
++    {
++        this.destroyPlugins();
++
++        this.context = null;
++
++        this.refresh = true;
++
++        this.maskManager.destroy();
++        this.maskManager = null;
++
++        this.smoothProperty = null;
++    }
++
++    /**
++     * Resizes the view to the specified width and height.
++     *
++     * @extends PIXI.SystemRenderer#resize
++     *
++     * @param {number} screenWidth - the new width of the screen
++     * @param {number} screenHeight - the new height of the screen
++     */
++    resize(screenWidth, screenHeight)
++    {
++        super.resize(screenWidth, screenHeight);
++
++        // reset the scale mode.. oddly this seems to be reset when the canvas is resized.
++        // surely a browser bug?? Let pixi fix that for you..
++        if (this.smoothProperty)
++        {
++            this.rootContext[this.smoothProperty] = (settings.SCALE_MODE === SCALE_MODES.LINEAR);
++        }
++    }
++}
++
++pluginTarget.mixin(PXSceneRenderer);
+diff --git a/src/core/sprites/Sprite.js b/src/core/sprites/Sprite.js
+index 28b0b18e..b8912dd0 100644
+--- a/src/core/sprites/Sprite.js
++++ b/src/core/sprites/Sprite.js
+@@ -1,5 +1,5 @@
+ import { Point, ObservablePoint, Rectangle } from '../math';
+-import { sign, TextureCache } from '../utils';
++import { sign, TextureCache, isV8 } from '../utils';
+ import { BLEND_MODES } from '../const';
+ import Texture from '../textures/Texture';
+ import Container from '../display/Container';
+@@ -319,6 +319,17 @@ export default class Sprite extends Container
+     }
+ 
+     /**
++     * Renders the object using the PXScene renderer
++     *
++     * @private
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    _renderPXScene(renderer)
++    {
++        renderer.plugins[this.pluginName].render(this);
++    }
++
++    /**
+      * Updates the bounds of the sprite.
+      *
+      * @private
+@@ -385,15 +396,26 @@ export default class Sprite extends Container
+     {
+         this.worldTransform.applyInverse(point, tempPoint);
+ 
+-        const width = this._texture.orig.width;
+-        const height = this._texture.orig.height;
++        let width;
++        let height;
++
++        if (isV8())
++        {
++            width = this.renderedObject.resource.w;
++            height = this.renderedObject.resource.h;
++        }
++        else
++        {
++            width = this._texture.orig.width;
++            height = this._texture.orig.height;
++        }
++
+         const x1 = -width * this.anchor.x;
+         let y1 = 0;
+ 
+         if (tempPoint.x > x1 && tempPoint.x < x1 + width)
+         {
+             y1 = -height * this.anchor.y;
+-
+             if (tempPoint.y > y1 && tempPoint.y < y1 + height)
+             {
+                 return true;
+diff --git a/src/core/sprites/pxscene/PXSceneSpriteRenderer.js b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
+new file mode 100644
+index 00000000..83cd4318
+--- /dev/null
++++ b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
+@@ -0,0 +1,128 @@
++import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
++
++import { Point } from '../../math';
++
++/**
++ * Renderer dedicated to drawing and batching sprites for PXScene.
++ *
++ * @class
++ * @private
++ * @memberof PIXI
++ */
++export default class PXSceneSpriteRenderer
++{
++    /**
++     * @param {PIXI.PXSceneRenderer} renderer -The renderer sprite this batch works for.
++     */
++    constructor(renderer)
++    {
++        this.renderer = renderer;
++    }
++
++    /**
++     * Renders the sprite object.
++     *
++     * @param {PIXI.Sprite} sprite - the sprite to render when using this spritebatch
++     */
++    render(sprite)
++    {
++        const texture = sprite._texture;
++        let spriteWidth = 0;
++        let spriteHeight = 0;
++
++        // Convert local coordinates to world coordinates
++        const point = new Point(sprite.x,
++            sprite.y);
++        const globalPoint = sprite.parent.toGlobal(point);
++
++        // Calculate all attributes
++
++        if (sprite.renderedObject)
++        {
++            const renderedObject = sprite.renderedObject;
++
++            spriteWidth = renderedObject.resource.w;
++            spriteHeight = renderedObject.resource.h;
++
++            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
++
++            renderedObject.x = attr.x;
++            renderedObject.y = attr.y;
++            renderedObject.cx = attr.cx;
++            renderedObject.cy = attr.cy;
++            renderedObject.a = attr.a;
++            renderedObject.r = attr.r;
++            renderedObject.sx = attr.sx;
++            renderedObject.sy = attr.sy;
++        }
++        else
++        {
++            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
++
++            sprite.renderedObject = this.renderer.view.create({
++                t: 'image',
++                parent: this.renderer.context,
++                x: attr.x,
++                y: attr.y,
++                cx: attr.cx,
++                cy: attr.cy,
++                a: attr.a,
++                r: attr.r,
++                sx: attr.sx,
++                sy: attr.sy,
++                url: texture.baseTexture.source.src,
++            });
++        }
++    }
++
++    /**
++     * Calculate sprite attribute.
++     *
++     * @param {Point} globalPoint - Global Point of the sprite
++     * @param {Number} spriteWidth - The width of the sprite
++     * @param {Number} spriteHeight - The height of the sprite
++     * @param {Object} sprite - The sprite object
++     * @return {Object} The calculated attributes.
++     * @private
++     */
++    _calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite)
++    {
++        const x = globalPoint.x - (spriteWidth * sprite.anchor.x);
++        const y = globalPoint.y - (spriteHeight * sprite.anchor.y);
++        const cx = spriteWidth * sprite.anchor.x;
++        const cy = spriteHeight * sprite.anchor.y;
++        const a = spriteWidth > 0 ? 1 : 0;
++        const worldTransform = {
++            skew: {},
++            scale: {},
++            position: {},
++        };
++
++        sprite.transform.worldTransform.decompose(worldTransform);
++        const r = worldTransform.rotation * (180 / Math.PI);
++        const sx = sprite.scale.x;
++        const sy = sprite.scale.y;
++
++        return {
++            x,
++            y,
++            cx,
++            cy,
++            a,
++            r,
++            sx,
++            sy,
++        };
++    }
++
++    /**
++     * destroy the sprite object.
++     *
++     */
++    destroy()
++    {
++        this.renderer = null;
++    }
++}
++
++PXSceneRenderer.registerPlugin('sprite', PXSceneSpriteRenderer);
+diff --git a/src/core/text/Text.js b/src/core/text/Text.js
+index cec8c323..dcd2bfeb 100644
+--- a/src/core/text/Text.js
++++ b/src/core/text/Text.js
+@@ -1,911 +1,14 @@
+-/* eslint max-depth: [2, 8] */
+-import Sprite from '../sprites/Sprite';
+-import Texture from '../textures/Texture';
+-import { Rectangle } from '../math';
+-import { sign } from '../utils';
+-import { TEXT_GRADIENT } from '../const';
+-import settings from '../settings';
+-import TextStyle from './TextStyle';
+-import trimCanvas from '../utils/trimCanvas';
++import { isV8 } from '../utils';
+ 
+-const defaultDestroyOptions = {
+-    texture: true,
+-    children: false,
+-    baseTexture: true,
+-};
++let Text;
+ 
+-/**
+- * A Text Object will create a line or multiple lines of text. To split a line you can use '\n' in your text string,
+- * or add a wordWrap property set to true and and wordWrapWidth property with a value in the style object.
+- *
+- * A Text can be created directly from a string and a style object
+- *
+- * ```js
+- * let text = new PIXI.Text('This is a pixi text',{fontFamily : 'Arial', fontSize: 24, fill : 0xff1010, align : 'center'});
+- * ```
+- *
+- * @class
+- * @extends PIXI.Sprite
+- * @memberof PIXI
+- */
+-export default class Text extends Sprite
++if (isV8())
+ {
+-    /**
+-     * @param {string} text - The string that you would like the text to display
+-     * @param {object|PIXI.TextStyle} [style] - The style parameters
+-     * @param {HTMLCanvasElement} [canvas] - The canvas element for drawing text
+-     */
+-    constructor(text, style, canvas)
+-    {
+-        canvas = canvas || document.createElement('canvas');
+-
+-        canvas.width = 3;
+-        canvas.height = 3;
+-
+-        const texture = Texture.fromCanvas(canvas);
+-
+-        texture.orig = new Rectangle();
+-        texture.trim = new Rectangle();
+-
+-        super(texture);
+-
+-        /**
+-         * The canvas element that everything is drawn to
+-         *
+-         * @member {HTMLCanvasElement}
+-         */
+-        this.canvas = canvas;
+-
+-        /**
+-         * The canvas 2d context that everything is drawn with
+-         * @member {CanvasRenderingContext2D}
+-         */
+-        this.context = this.canvas.getContext('2d');
+-
+-        /**
+-         * The resolution / device pixel ratio of the canvas. This is set automatically by the renderer.
+-         * @member {number}
+-         * @default 1
+-         */
+-        this.resolution = settings.RESOLUTION;
+-
+-        /**
+-         * Private tracker for the current text.
+-         *
+-         * @member {string}
+-         * @private
+-         */
+-        this._text = null;
+-
+-        /**
+-         * Private tracker for the current style.
+-         *
+-         * @member {object}
+-         * @private
+-         */
+-        this._style = null;
+-        /**
+-         * Private listener to track style changes.
+-         *
+-         * @member {Function}
+-         * @private
+-         */
+-        this._styleListener = null;
+-
+-        /**
+-         * Private tracker for the current font.
+-         *
+-         * @member {string}
+-         * @private
+-         */
+-        this._font = '';
+-
+-        this.text = text;
+-        this.style = style;
+-
+-        this.localStyleID = -1;
+-    }
+-
+-    /**
+-     * Renders text and updates it when needed.
+-     *
+-     * @private
+-     * @param {boolean} respectDirty - Whether to abort updating the text if the Text isn't dirty and the function is called.
+-     */
+-    updateText(respectDirty)
+-    {
+-        const style = this._style;
+-
+-        // check if style has changed..
+-        if (this.localStyleID !== style.styleID)
+-        {
+-            this.dirty = true;
+-            this.localStyleID = style.styleID;
+-        }
+-
+-        if (!this.dirty && respectDirty)
+-        {
+-            return;
+-        }
+-
+-        this._font = Text.getFontStyle(style);
+-
+-        this.context.font = this._font;
+-
+-        // word wrap
+-        // preserve original text
+-        const outputText = style.wordWrap ? this.wordWrap(this._text) : this._text;
+-
+-        // split text into lines
+-        const lines = outputText.split(/(?:\r\n|\r|\n)/);
+-
+-        // calculate text width
+-        const lineWidths = new Array(lines.length);
+-        let maxLineWidth = 0;
+-        const fontProperties = Text.calculateFontProperties(this._font);
+-
+-        for (let i = 0; i < lines.length; i++)
+-        {
+-            const lineWidth = this.context.measureText(lines[i]).width + ((lines[i].length - 1) * style.letterSpacing);
+-
+-            lineWidths[i] = lineWidth;
+-            maxLineWidth = Math.max(maxLineWidth, lineWidth);
+-        }
+-
+-        let width = maxLineWidth + style.strokeThickness;
+-
+-        if (style.dropShadow)
+-        {
+-            width += style.dropShadowDistance;
+-        }
+-
+-        this.canvas.width = Math.ceil((width + (style.padding * 2)) * this.resolution);
+-
+-        // calculate text height
+-        const lineHeight = style.lineHeight || fontProperties.fontSize + style.strokeThickness;
+-
+-        let height = Math.max(lineHeight, fontProperties.fontSize + style.strokeThickness)
+-            + ((lines.length - 1) * lineHeight);
+-
+-        if (style.dropShadow)
+-        {
+-            height += style.dropShadowDistance;
+-        }
+-
+-        this.canvas.height = Math.ceil((height + (style.padding * 2)) * this.resolution);
+-
+-        this.context.scale(this.resolution, this.resolution);
+-
+-        this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+-
+-        this.context.font = this._font;
+-        this.context.strokeStyle = style.stroke;
+-        this.context.lineWidth = style.strokeThickness;
+-        this.context.textBaseline = style.textBaseline;
+-        this.context.lineJoin = style.lineJoin;
+-        this.context.miterLimit = style.miterLimit;
+-
+-        let linePositionX;
+-        let linePositionY;
+-
+-        if (style.dropShadow)
+-        {
+-            this.context.shadowBlur = style.dropShadowBlur;
+-            this.context.globalAlpha = style.dropShadowAlpha;
+-
+-            if (style.dropShadowBlur > 0)
+-            {
+-                this.context.shadowColor = style.dropShadowColor;
+-            }
+-            else
+-            {
+-                this.context.fillStyle = style.dropShadowColor;
+-            }
+-
+-            const xShadowOffset = Math.cos(style.dropShadowAngle) * style.dropShadowDistance;
+-            const yShadowOffset = Math.sin(style.dropShadowAngle) * style.dropShadowDistance;
+-
+-            for (let i = 0; i < lines.length; i++)
+-            {
+-                linePositionX = style.strokeThickness / 2;
+-                linePositionY = ((style.strokeThickness / 2) + (i * lineHeight)) + fontProperties.ascent;
+-
+-                if (style.align === 'right')
+-                {
+-                    linePositionX += maxLineWidth - lineWidths[i];
+-                }
+-                else if (style.align === 'center')
+-                {
+-                    linePositionX += (maxLineWidth - lineWidths[i]) / 2;
+-                }
+-
+-                if (style.fill)
+-                {
+-                    this.drawLetterSpacing(
+-                        lines[i],
+-                        linePositionX + xShadowOffset + style.padding, linePositionY + yShadowOffset + style.padding
+-                    );
+-
+-                    if (style.stroke && style.strokeThickness)
+-                    {
+-                        this.context.strokeStyle = style.dropShadowColor;
+-                        this.drawLetterSpacing(
+-                            lines[i],
+-                            linePositionX + xShadowOffset + style.padding, linePositionY + yShadowOffset + style.padding,
+-                            true
+-                        );
+-                        this.context.strokeStyle = style.stroke;
+-                    }
+-                }
+-            }
+-        }
+-
+-        // reset the shadow blur and alpha that was set by the drop shadow, for the regular text
+-        this.context.shadowBlur = 0;
+-        this.context.globalAlpha = 1;
+-
+-        // set canvas text styles
+-        this.context.fillStyle = this._generateFillStyle(style, lines);
+-
+-        // draw lines line by line
+-        for (let i = 0; i < lines.length; i++)
+-        {
+-            linePositionX = style.strokeThickness / 2;
+-            linePositionY = ((style.strokeThickness / 2) + (i * lineHeight)) + fontProperties.ascent;
+-
+-            if (style.align === 'right')
+-            {
+-                linePositionX += maxLineWidth - lineWidths[i];
+-            }
+-            else if (style.align === 'center')
+-            {
+-                linePositionX += (maxLineWidth - lineWidths[i]) / 2;
+-            }
+-
+-            if (style.stroke && style.strokeThickness)
+-            {
+-                this.drawLetterSpacing(lines[i], linePositionX + style.padding, linePositionY + style.padding, true);
+-            }
+-
+-            if (style.fill)
+-            {
+-                this.drawLetterSpacing(lines[i], linePositionX + style.padding, linePositionY + style.padding);
+-            }
+-        }
+-
+-        this.updateTexture();
+-    }
+-
+-    /**
+-     * Render the text with letter-spacing.
+-     * @param {string} text - The text to draw
+-     * @param {number} x - Horizontal position to draw the text
+-     * @param {number} y - Vertical position to draw the text
+-     * @param {boolean} [isStroke=false] - Is this drawing for the outside stroke of the
+-     *  text? If not, it's for the inside fill
+-     * @private
+-     */
+-    drawLetterSpacing(text, x, y, isStroke = false)
+-    {
+-        const style = this._style;
+-
+-        // letterSpacing of 0 means normal
+-        const letterSpacing = style.letterSpacing;
+-
+-        if (letterSpacing === 0)
+-        {
+-            if (isStroke)
+-            {
+-                this.context.strokeText(text, x, y);
+-            }
+-            else
+-            {
+-                this.context.fillText(text, x, y);
+-            }
+-
+-            return;
+-        }
+-
+-        const characters = String.prototype.split.call(text, '');
+-        let currentPosition = x;
+-        let index = 0;
+-        let current = '';
+-
+-        while (index < text.length)
+-        {
+-            current = characters[index++];
+-            if (isStroke)
+-            {
+-                this.context.strokeText(current, currentPosition, y);
+-            }
+-            else
+-            {
+-                this.context.fillText(current, currentPosition, y);
+-            }
+-            currentPosition += this.context.measureText(current).width + letterSpacing;
+-        }
+-    }
+-
+-    /**
+-     * Updates texture size based on canvas size
+-     *
+-     * @private
+-     */
+-    updateTexture()
+-    {
+-        if (this._style.trim)
+-        {
+-            const trimmed = trimCanvas(this.canvas);
+-
+-            this.canvas.width = trimmed.width;
+-            this.canvas.height = trimmed.height;
+-            this.context.putImageData(trimmed.data, 0, 0);
+-        }
+-
+-        const texture = this._texture;
+-        const style = this._style;
+-
+-        texture.baseTexture.hasLoaded = true;
+-        texture.baseTexture.resolution = this.resolution;
+-
+-        texture.baseTexture.realWidth = this.canvas.width;
+-        texture.baseTexture.realHeight = this.canvas.height;
+-        texture.baseTexture.width = this.canvas.width / this.resolution;
+-        texture.baseTexture.height = this.canvas.height / this.resolution;
+-        texture.trim.width = texture._frame.width = this.canvas.width / this.resolution;
+-        texture.trim.height = texture._frame.height = this.canvas.height / this.resolution;
+-
+-        texture.trim.x = -style.padding;
+-        texture.trim.y = -style.padding;
+-
+-        texture.orig.width = texture._frame.width - (style.padding * 2);
+-        texture.orig.height = texture._frame.height - (style.padding * 2);
+-
+-        // call sprite onTextureUpdate to update scale if _width or _height were set
+-        this._onTextureUpdate();
+-
+-        texture.baseTexture.emit('update', texture.baseTexture);
+-
+-        this.dirty = false;
+-    }
+-
+-    /**
+-     * Renders the object using the WebGL renderer
+-     *
+-     * @param {PIXI.WebGLRenderer} renderer - The renderer
+-     */
+-    renderWebGL(renderer)
+-    {
+-        if (this.resolution !== renderer.resolution)
+-        {
+-            this.resolution = renderer.resolution;
+-            this.dirty = true;
+-        }
+-
+-        this.updateText(true);
+-
+-        super.renderWebGL(renderer);
+-    }
+-
+-    /**
+-     * Renders the object using the Canvas renderer
+-     *
+-     * @private
+-     * @param {PIXI.CanvasRenderer} renderer - The renderer
+-     */
+-    _renderCanvas(renderer)
+-    {
+-        if (this.resolution !== renderer.resolution)
+-        {
+-            this.resolution = renderer.resolution;
+-            this.dirty = true;
+-        }
+-
+-        this.updateText(true);
+-
+-        super._renderCanvas(renderer);
+-    }
+-
+-    /**
+-     * Applies newlines to a string to have it optimally fit into the horizontal
+-     * bounds set by the Text object's wordWrapWidth property.
+-     *
+-     * @private
+-     * @param {string} text - String to apply word wrapping to
+-     * @return {string} New string with new lines applied where required
+-     */
+-    wordWrap(text)
+-    {
+-        // Greedy wrapping algorithm that will wrap words as the line grows longer
+-        // than its horizontal bounds.
+-        let result = '';
+-        const style = this._style;
+-        const lines = text.split('\n');
+-        const wordWrapWidth = style.wordWrapWidth;
+-
+-        for (let i = 0; i < lines.length; i++)
+-        {
+-            let spaceLeft = wordWrapWidth;
+-            const words = lines[i].split(' ');
+-
+-            for (let j = 0; j < words.length; j++)
+-            {
+-                const wordWidth = this.context.measureText(words[j]).width;
+-
+-                if (style.breakWords && wordWidth > wordWrapWidth)
+-                {
+-                    // Word should be split in the middle
+-                    const characters = words[j].split('');
+-
+-                    for (let c = 0; c < characters.length; c++)
+-                    {
+-                        const characterWidth = this.context.measureText(characters[c]).width;
+-
+-                        if (characterWidth > spaceLeft)
+-                        {
+-                            result += `\n${characters[c]}`;
+-                            spaceLeft = wordWrapWidth - characterWidth;
+-                        }
+-                        else
+-                        {
+-                            if (c === 0)
+-                            {
+-                                result += ' ';
+-                            }
+-
+-                            result += characters[c];
+-                            spaceLeft -= characterWidth;
+-                        }
+-                    }
+-                }
+-                else
+-                {
+-                    const wordWidthWithSpace = wordWidth + this.context.measureText(' ').width;
+-
+-                    if (j === 0 || wordWidthWithSpace > spaceLeft)
+-                    {
+-                        // Skip printing the newline if it's the first word of the line that is
+-                        // greater than the word wrap width.
+-                        if (j > 0)
+-                        {
+-                            result += '\n';
+-                        }
+-                        result += words[j];
+-                        spaceLeft = wordWrapWidth - wordWidth;
+-                    }
+-                    else
+-                    {
+-                        spaceLeft -= wordWidthWithSpace;
+-                        result += ` ${words[j]}`;
+-                    }
+-                }
+-            }
+-
+-            if (i < lines.length - 1)
+-            {
+-                result += '\n';
+-            }
+-        }
+-
+-        return result;
+-    }
+-
+-    /**
+-     * Gets the local bounds of the text object.
+-     *
+-     * @param {Rectangle} rect - The output rectangle.
+-     * @return {Rectangle} The bounds.
+-     */
+-    getLocalBounds(rect)
+-    {
+-        this.updateText(true);
+-
+-        return super.getLocalBounds.call(this, rect);
+-    }
+-
+-    /**
+-     * calculates the bounds of the Text as a rectangle. The bounds calculation takes the worldTransform into account.
+-     */
+-    _calculateBounds()
+-    {
+-        this.updateText(true);
+-        this.calculateVertices();
+-        // if we have already done this on THIS frame.
+-        this._bounds.addQuad(this.vertexData);
+-    }
+-
+-    /**
+-     * Method to be called upon a TextStyle change.
+-     * @private
+-     */
+-    _onStyleChange()
+-    {
+-        this.dirty = true;
+-    }
+-
+-    /**
+-     * Generates the fill style. Can automatically generate a gradient based on the fill style being an array
+-     *
+-     * @private
+-     * @param {object} style - The style.
+-     * @param {string[]} lines - The lines of text.
+-     * @return {string|number|CanvasGradient} The fill style
+-     */
+-    _generateFillStyle(style, lines)
+-    {
+-        if (!Array.isArray(style.fill))
+-        {
+-            return style.fill;
+-        }
+-
+-        // cocoon on canvas+ cannot generate textures, so use the first colour instead
+-        if (navigator.isCocoonJS)
+-        {
+-            return style.fill[0];
+-        }
+-
+-        // the gradient will be evenly spaced out according to how large the array is.
+-        // ['#FF0000', '#00FF00', '#0000FF'] would created stops at 0.25, 0.5 and 0.75
+-        let gradient;
+-        let totalIterations;
+-        let currentIteration;
+-        let stop;
+-
+-        const width = this.canvas.width / this.resolution;
+-        const height = this.canvas.height / this.resolution;
+-
+-        // make a copy of the style settings, so we can manipulate them later
+-        const fill = style.fill.slice();
+-        const fillGradientStops = style.fillGradientStops.slice();
+-
+-        // wanting to evenly distribute the fills. So an array of 4 colours should give fills of 0.25, 0.5 and 0.75
+-        if (!fillGradientStops.length)
+-        {
+-            const lengthPlus1 = fill.length + 1;
+-
+-            for (let i = 1; i < lengthPlus1; ++i)
+-            {
+-                fillGradientStops.push(i / lengthPlus1);
+-            }
+-        }
+-
+-        // stop the bleeding of the last gradient on the line above to the top gradient of the this line
+-        // by hard defining the first gradient colour at point 0, and last gradient colour at point 1
+-        fill.unshift(style.fill[0]);
+-        fillGradientStops.unshift(0);
+-
+-        fill.push(style.fill[style.fill.length - 1]);
+-        fillGradientStops.push(1);
+-
+-        if (style.fillGradientType === TEXT_GRADIENT.LINEAR_VERTICAL)
+-        {
+-            // start the gradient at the top center of the canvas, and end at the bottom middle of the canvas
+-            gradient = this.context.createLinearGradient(width / 2, 0, width / 2, height);
+-
+-            // we need to repeat the gradient so that each individual line of text has the same vertical gradient effect
+-            // ['#FF0000', '#00FF00', '#0000FF'] over 2 lines would create stops at 0.125, 0.25, 0.375, 0.625, 0.75, 0.875
+-            totalIterations = (fill.length + 1) * lines.length;
+-            currentIteration = 0;
+-            for (let i = 0; i < lines.length; i++)
+-            {
+-                currentIteration += 1;
+-                for (let j = 0; j < fill.length; j++)
+-                {
+-                    if (fillGradientStops[j])
+-                    {
+-                        stop = (fillGradientStops[j] / lines.length) + (i / lines.length);
+-                    }
+-                    else
+-                    {
+-                        stop = currentIteration / totalIterations;
+-                    }
+-                    gradient.addColorStop(stop, fill[j]);
+-                    currentIteration++;
+-                }
+-            }
+-        }
+-        else
+-        {
+-            // start the gradient at the center left of the canvas, and end at the center right of the canvas
+-            gradient = this.context.createLinearGradient(0, height / 2, width, height / 2);
+-
+-            // can just evenly space out the gradients in this case, as multiple lines makes no difference
+-            // to an even left to right gradient
+-            totalIterations = fill.length + 1;
+-            currentIteration = 1;
+-
+-            for (let i = 0; i < fill.length; i++)
+-            {
+-                if (fillGradientStops[i])
+-                {
+-                    stop = fillGradientStops[i];
+-                }
+-                else
+-                {
+-                    stop = currentIteration / totalIterations;
+-                }
+-                gradient.addColorStop(stop, fill[i]);
+-                currentIteration++;
+-            }
+-        }
+-
+-        return gradient;
+-    }
+-
+-    /**
+-     * Destroys this text object.
+-     * Note* Unlike a Sprite, a Text object will automatically destroy its baseTexture and texture as
+-     * the majority of the time the texture will not be shared with any other Sprites.
+-     *
+-     * @param {object|boolean} [options] - Options parameter. A boolean will act as if all options
+-     *  have been set to that value
+-     * @param {boolean} [options.children=false] - if set to true, all the children will have their
+-     *  destroy method called as well. 'options' will be passed on to those calls.
+-     * @param {boolean} [options.texture=true] - Should it destroy the current texture of the sprite as well
+-     * @param {boolean} [options.baseTexture=true] - Should it destroy the base texture of the sprite as well
+-     */
+-    destroy(options)
+-    {
+-        if (typeof options === 'boolean')
+-        {
+-            options = { children: options };
+-        }
+-
+-        options = Object.assign({}, defaultDestroyOptions, options);
+-
+-        super.destroy(options);
+-
+-        // make sure to reset the the context and canvas.. dont want this hanging around in memory!
+-        this.context = null;
+-        this.canvas = null;
+-
+-        this._style = null;
+-    }
+-
+-    /**
+-     * The width of the Text, setting this will actually modify the scale to achieve the value set
+-     *
+-     * @member {number}
+-     */
+-    get width()
+-    {
+-        this.updateText(true);
+-
+-        return Math.abs(this.scale.x) * this._texture.orig.width;
+-    }
+-
+-    set width(value) // eslint-disable-line require-jsdoc
+-    {
+-        this.updateText(true);
+-
+-        const s = sign(this.scale.x) || 1;
+-
+-        this.scale.x = s * value / this._texture.orig.width;
+-        this._width = value;
+-    }
+-
+-    /**
+-     * The height of the Text, setting this will actually modify the scale to achieve the value set
+-     *
+-     * @member {number}
+-     */
+-    get height()
+-    {
+-        this.updateText(true);
+-
+-        return Math.abs(this.scale.y) * this._texture.orig.height;
+-    }
+-
+-    set height(value) // eslint-disable-line require-jsdoc
+-    {
+-        this.updateText(true);
+-
+-        const s = sign(this.scale.y) || 1;
+-
+-        this.scale.y = s * value / this._texture.orig.height;
+-        this._height = value;
+-    }
+-
+-    /**
+-     * Set the style of the text. Set up an event listener to listen for changes on the style
+-     * object and mark the text as dirty.
+-     *
+-     * @member {object|PIXI.TextStyle}
+-     */
+-    get style()
+-    {
+-        return this._style;
+-    }
+-
+-    set style(style) // eslint-disable-line require-jsdoc
+-    {
+-        style = style || {};
+-
+-        if (style instanceof TextStyle)
+-        {
+-            this._style = style;
+-        }
+-        else
+-        {
+-            this._style = new TextStyle(style);
+-        }
+-
+-        this.localStyleID = -1;
+-        this.dirty = true;
+-    }
+-
+-    /**
+-     * Set the copy for the text object. To split a line you can use '\n'.
+-     *
+-     * @member {string}
+-     */
+-    get text()
+-    {
+-        return this._text;
+-    }
+-
+-    set text(text) // eslint-disable-line require-jsdoc
+-    {
+-        text = String(text === '' || text === null || text === undefined ? ' ' : text);
+-
+-        if (this._text === text)
+-        {
+-            return;
+-        }
+-        this._text = text;
+-        this.dirty = true;
+-    }
+-
+-    /**
+-     * Generates a font style string to use for Text.calculateFontProperties(). Takes the same parameter
+-     * as Text.style.
+-     *
+-     * @static
+-     * @param {object|TextStyle} style - String representing the style of the font
+-     * @return {string} Font style string, for passing to Text.calculateFontProperties()
+-     */
+-    static getFontStyle(style)
+-    {
+-        style = style || {};
+-
+-        if (!(style instanceof TextStyle))
+-        {
+-            style = new TextStyle(style);
+-        }
+-
+-        // build canvas api font setting from individual components. Convert a numeric style.fontSize to px
+-        const fontSizeString = (typeof style.fontSize === 'number') ? `${style.fontSize}px` : style.fontSize;
+-
+-        // Clean-up fontFamily property by quoting each font name
+-        // this will support font names with spaces
+-        let fontFamilies = style.fontFamily;
+-
+-        if (!Array.isArray(style.fontFamily))
+-        {
+-            fontFamilies = style.fontFamily.split(',');
+-        }
+-
+-        for (let i = fontFamilies.length - 1; i >= 0; i--)
+-        {
+-            // Trim any extra white-space
+-            let fontFamily = fontFamilies[i].trim();
+-
+-            // Check if font already contains strings
+-            if (!(/([\"\'])[^\'\"]+\1/).test(fontFamily))
+-            {
+-                fontFamily = `"${fontFamily}"`;
+-            }
+-            fontFamilies[i] = fontFamily;
+-        }
+-
+-        return `${style.fontStyle} ${style.fontVariant} ${style.fontWeight} ${fontSizeString} ${fontFamilies.join(',')}`;
+-    }
+-
+-    /**
+-     * Calculates the ascent, descent and fontSize of a given fontStyle
+-     *
+-     * @static
+-     * @param {string} fontStyle - String representing the style of the font
+-     * @return {Object} Font properties object
+-     */
+-    static calculateFontProperties(fontStyle)
+-    {
+-        // as this method is used for preparing assets, don't recalculate things if we don't need to
+-        if (Text.fontPropertiesCache[fontStyle])
+-        {
+-            return Text.fontPropertiesCache[fontStyle];
+-        }
+-
+-        const properties = {};
+-
+-        const canvas = Text.fontPropertiesCanvas;
+-        const context = Text.fontPropertiesContext;
+-
+-        context.font = fontStyle;
+-
+-        const width = Math.ceil(context.measureText('|MÉq').width);
+-        let baseline = Math.ceil(context.measureText('M').width);
+-        const height = 2 * baseline;
+-
+-        baseline = baseline * 1.4 | 0;
+-
+-        canvas.width = width;
+-        canvas.height = height;
+-
+-        context.fillStyle = '#f00';
+-        context.fillRect(0, 0, width, height);
+-
+-        context.font = fontStyle;
+-
+-        context.textBaseline = 'alphabetic';
+-        context.fillStyle = '#000';
+-        context.fillText('|MÉq', 0, baseline);
+-
+-        const imagedata = context.getImageData(0, 0, width, height).data;
+-        const pixels = imagedata.length;
+-        const line = width * 4;
+-
+-        let i = 0;
+-        let idx = 0;
+-        let stop = false;
+-
+-        // ascent. scan from top to bottom until we find a non red pixel
+-        for (i = 0; i < baseline; ++i)
+-        {
+-            for (let j = 0; j < line; j += 4)
+-            {
+-                if (imagedata[idx + j] !== 255)
+-                {
+-                    stop = true;
+-                    break;
+-                }
+-            }
+-            if (!stop)
+-            {
+-                idx += line;
+-            }
+-            else
+-            {
+-                break;
+-            }
+-        }
+-
+-        properties.ascent = baseline - i;
+-
+-        idx = pixels - line;
+-        stop = false;
+-
+-        // descent. scan from bottom to top until we find a non red pixel
+-        for (i = height; i > baseline; --i)
+-        {
+-            for (let j = 0; j < line; j += 4)
+-            {
+-                if (imagedata[idx + j] !== 255)
+-                {
+-                    stop = true;
+-                    break;
+-                }
+-            }
+-
+-            if (!stop)
+-            {
+-                idx -= line;
+-            }
+-            else
+-            {
+-                break;
+-            }
+-        }
+-
+-        properties.descent = i - baseline;
+-        properties.fontSize = properties.ascent + properties.descent;
+-
+-        Text.fontPropertiesCache[fontStyle] = properties;
+-
+-        return properties;
+-    }
++    Text = require('./TextV8'); // eslint-disable-line global-require
++}
++else
++{
++    Text = require('./TextWeb'); // eslint-disable-line global-require
+ }
+ 
+-Text.fontPropertiesCache = {};
+-Text.fontPropertiesCanvas = document.createElement('canvas');
+-Text.fontPropertiesContext = Text.fontPropertiesCanvas.getContext('2d');
++module.exports = Text;
+diff --git a/src/core/text/TextV8.js b/src/core/text/TextV8.js
+new file mode 100644
+index 00000000..225bd31f
+--- /dev/null
++++ b/src/core/text/TextV8.js
+@@ -0,0 +1,354 @@
++/* eslint max-depth: [2, 8] */
++import Container from '../display/Container';
++import { sign } from '../utils';
++import TextStyle from './TextStyle';
++
++const defaultDestroyOptions = {
++    texture: true,
++    children: false,
++    baseTexture: true,
++};
++
++// Map: font family name -> fontUrl
++// Set key lowercase
++const fontFamilyUrlMap = {
++    dejavusans: 'http://www.pxscene.org/examples/px-reference/fonts/DejaVuSans.ttf',
++    arial: 'http://www.pxscene.org/examples/px-reference/fonts/DejaVuSans.ttf',
++};
++
++/**
++ * A Text Object will create a line or multiple lines of text. To split a line you can use '\n' in your text string,
++ * or add a wordWrap property set to true and and wordWrapWidth property with a value in the style object.
++ *
++ * A Text can be created directly from a string and a style object
++ *
++ * ```js
++ * let text = new PIXI.Text('This is a pixi text',{fontFamily : 'Arial', fontSize: 24, fill : 0xff1010, align : 'center'});
++ * ```
++ *
++ * @class
++ * @extends PIXI.Sprite
++ * @memberof PIXI
++ */
++export default class TextV8 extends Container
++{
++    /**
++     * @param {string} text - The string that you would like the text to display
++     * @param {object|PIXI.TextStyle} [style] - The style parameters
++     * @param {HTMLCanvasElement} [canvas] - The canvas element for drawing text
++     */
++    constructor(text, style)
++    {
++        super();
++
++        /**
++         * Private tracker for the current text.
++         *
++         * @member {string}
++         * @private
++         */
++        this._text = null;
++
++        /**
++         * Private tracker for the current style.
++         *
++         * @member {object}
++         * @private
++         */
++        this._style = null;
++
++        /**
++         * Private tracker for the current font.
++         *
++         * @member {Object}
++         * @private
++         */
++        this._font = null;
++
++        this.text = text;
++        this.style = style;
++
++        this.localStyleID = -1;
++
++        /**
++         * Plugin that is responsible for rendering this element.
++         * Allows to customize the rendering process without overriding '_renderWebGL' & '_renderCanvas' methods.
++         *
++         * @member {string}
++         * @default 'TextV8'
++         */
++        this.pluginName = 'TextV8';
++    }
++
++    /**
++     * Renders text and updates it when needed.
++     *
++     * @private
++     * @param {boolean} respectDirty - Whether to abort updating the text if the Text isn't dirty and the function is called.
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    updateText(respectDirty, renderer)
++    {
++        const style = this._style;
++
++        // check if style has changed..
++        if (this.localStyleID !== style.styleID)
++        {
++            this.dirty = true;
++            this.localStyleID = style.styleID;
++        }
++
++        if (!this.dirty && respectDirty)
++        {
++            return;
++        }
++
++        this._font = TextV8.getFontStyle(style, renderer);
++        this.dirty = false;
++    }
++
++    /**
++     * Renders the object using the PXScene renderer
++     *
++     * @private
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    _renderPXScene(renderer)
++    {
++        this.updateText(false, renderer);
++        this.fontResourceCache = TextV8.fontResourceCache;
++        renderer.plugins[this.pluginName].render(this);
++    }
++
++    /**
++     * Method to be called upon a TextStyle change.
++     * @private
++     */
++    _onStyleChange()
++    {
++        this.dirty = true;
++    }
++
++    /**
++     * Destroys this text object.
++     * Note* Unlike a Sprite, a Text object will automatically destroy its baseTexture and texture as
++     * the majority of the time the texture will not be shared with any other Sprites.
++     *
++     * @param {object|boolean} [options] - Options parameter. A boolean will act as if all options
++     *  have been set to that value
++     * @param {boolean} [options.children=false] - if set to true, all the children will have their
++     *  destroy method called as well. 'options' will be passed on to those calls.
++     * @param {boolean} [options.texture=true] - Should it destroy the current texture of the sprite as well
++     * @param {boolean} [options.baseTexture=true] - Should it destroy the base texture of the sprite as well
++     */
++    destroy(options)
++    {
++        if (typeof options === 'boolean')
++        {
++            options = { children: options };
++        }
++
++        options = Object.assign({}, defaultDestroyOptions, options);
++
++        super.destroy(options);
++
++        // make sure to reset the the context and canvas.. dont want this hanging around in memory!
++        this.context = null;
++        this.canvas = null;
++
++        this._style = null;
++    }
++
++    /**
++     * The width of the Text, setting this will actually modify the scale to achieve the value set
++     *
++     * @member {number}
++     */
++    get width()
++    {
++        this.updateText(true);
++
++        const origWidth = this.renderedObject ? this.renderedObject.w : 1;
++
++        return origWidth * Math.abs(this.scale.x);
++    }
++
++    set width(value) // eslint-disable-line require-jsdoc
++    {
++        this.updateText(true);
++
++        const s = sign(this.scale.x) || 1;
++
++        const origWidth = this.renderedObject ? this.renderedObject.w : 1;
++
++        this.scale.x = s * value / origWidth;
++        this._width = value;
++    }
++
++    /**
++     * The height of the Text, setting this will actually modify the scale to achieve the value set
++     *
++     * @member {number}
++     */
++    get height()
++    {
++        this.updateText(true);
++
++        const origHeight = this.renderedObject ? this.renderedObject.h : 1;
++
++        return origHeight * Math.abs(this.scale.y);
++    }
++
++    set height(value) // eslint-disable-line require-jsdoc
++    {
++        this.updateText(true);
++
++        const s = sign(this.scale.y) || 1;
++
++        const origHeight = this.renderedObject ? this.renderedObject.h : 1;
++
++        this.scale.y = s * value / origHeight;
++        this._height = value;
++    }
++
++    /**
++     * Set the style of the text. Set up an event listener to listen for changes on the style
++     * object and mark the text as dirty.
++     *
++     * @member {object|PIXI.TextStyle}
++     */
++    get style()
++    {
++        return this._style;
++    }
++
++    set style(style) // eslint-disable-line require-jsdoc
++    {
++        style = style || {};
++
++        if (style instanceof TextStyle)
++        {
++            this._style = style;
++        }
++        else
++        {
++            this._style = new TextStyle(style);
++        }
++
++        this.localStyleID = -1;
++        this.dirty = true;
++    }
++
++    /**
++     * Set the copy for the text object. To split a line you can use '\n'.
++     *
++     * @member {string}
++     */
++    get text()
++    {
++        return this._text;
++    }
++
++    set text(text) // eslint-disable-line require-jsdoc
++    {
++        text = String(text === '' || text === null || text === undefined ? ' ' : text);
++
++        if (this._text === text)
++        {
++            return;
++        }
++        this._text = text;
++        this.dirty = true;
++    }
++
++    /**
++     * Generates a font style string to use for Text.calculateFontProperties(). Takes the same parameter
++     * as Text.style.
++     *
++     * @static
++     * @param {object|TextStyle} style - String representing the style of the font
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     * @return {string} Font style string, for passing to Text.calculateFontProperties()
++     */
++    static getFontStyle(style, renderer)
++    {
++        style = style || {};
++
++        if (!(style instanceof TextStyle))
++        {
++            style = new TextStyle(style);
++        }
++
++        const fontSize = (typeof style.fontSize === 'number') ? style.fontSize : Number.parseFloat(style.fontSize);
++
++        // Clean-up fontFamily property by quoting each font name
++        // this will support font names with spaces
++        let fontFamilies = style.fontFamily;
++
++        if (!Array.isArray(style.fontFamily))
++        {
++            fontFamilies = style.fontFamily.split(',');
++        }
++
++        for (let i = fontFamilies.length - 1; i >= 0; i--)
++        {
++            // Trim any extra white-space
++            const fontFamily = fontFamilies[i].trim();
++
++            fontFamilies[i] = fontFamily;
++
++            // Create font resource
++            const fontFamilyKey = TextV8._getFontFamilyKey(fontFamily);
++
++            if (renderer && !TextV8.fontResourceCache[fontFamilyKey])
++            {
++                const fontUrl = fontFamilyUrlMap[fontFamilyKey];
++
++                if (fontUrl)
++                {
++                    const fontRes = renderer.view.create({
++                        t: 'fontResource',
++                        url: fontUrl,
++                    });
++
++                    fontRes.ready.then((font) =>
++                    {
++                        TextV8.fontResourceCache[fontFamilyKey] = font;
++                    });
++                }
++            }
++        }
++
++        return {
++            fontFamilies,
++            fontSize,
++            fontWeight: style.fontWeight,
++            fontStyle: style.fontStyle,
++        };
++    }
++
++    /**
++     * Get font family key in the map
++     * @param {String} fontFamily - font family name
++     * @returns {String} Font family key.
++     * @private
++     */
++    static _getFontFamilyKey(fontFamily)
++    {
++        return fontFamily.toLowerCase();
++    }
++
++    /**
++     * Get font resource by Font family.
++     * @param {String} fontFamily - Font family name
++     * @returns {Object} FontResource
++     */
++    static getFontResourceByFamily(fontFamily)
++    {
++        const fontFamilyKey = this._getFontFamilyKey(fontFamily);
++
++        return TextV8.fontResourceCache[fontFamilyKey];
++    }
++}
++
++TextV8.fontResourceCache = {};
+diff --git a/src/core/text/TextWeb.js b/src/core/text/TextWeb.js
+new file mode 100644
+index 00000000..93d923a8
+--- /dev/null
++++ b/src/core/text/TextWeb.js
+@@ -0,0 +1,915 @@
++/* eslint max-depth: [2, 8] */
++import Sprite from '../sprites/Sprite';
++import Texture from '../textures/Texture';
++import { Rectangle } from '../math';
++import { sign, isV8 } from '../utils';
++import { TEXT_GRADIENT } from '../const';
++import settings from '../settings';
++import TextStyle from './TextStyle';
++import trimCanvas from '../utils/trimCanvas';
++
++const defaultDestroyOptions = {
++    texture: true,
++    children: false,
++    baseTexture: true,
++};
++
++/**
++ * A Text Object will create a line or multiple lines of text. To split a line you can use '\n' in your text string,
++ * or add a wordWrap property set to true and and wordWrapWidth property with a value in the style object.
++ *
++ * A Text can be created directly from a string and a style object
++ *
++ * ```js
++ * let text = new PIXI.Text('This is a pixi text',{fontFamily : 'Arial', fontSize: 24, fill : 0xff1010, align : 'center'});
++ * ```
++ *
++ * @class
++ * @extends PIXI.Sprite
++ * @memberof PIXI
++ */
++export default class Text extends Sprite
++{
++    /**
++     * @param {string} text - The string that you would like the text to display
++     * @param {object|PIXI.TextStyle} [style] - The style parameters
++     * @param {HTMLCanvasElement} [canvas] - The canvas element for drawing text
++     */
++    constructor(text, style, canvas)
++    {
++        canvas = canvas || document.createElement('canvas');
++
++        canvas.width = 3;
++        canvas.height = 3;
++
++        const texture = Texture.fromCanvas(canvas);
++
++        texture.orig = new Rectangle();
++        texture.trim = new Rectangle();
++
++        super(texture);
++
++        /**
++         * The canvas element that everything is drawn to
++         *
++         * @member {HTMLCanvasElement}
++         */
++        this.canvas = canvas;
++
++        /**
++         * The canvas 2d context that everything is drawn with
++         * @member {CanvasRenderingContext2D}
++         */
++        this.context = this.canvas.getContext('2d');
++
++        /**
++         * The resolution / device pixel ratio of the canvas. This is set automatically by the renderer.
++         * @member {number}
++         * @default 1
++         */
++        this.resolution = settings.RESOLUTION;
++
++        /**
++         * Private tracker for the current text.
++         *
++         * @member {string}
++         * @private
++         */
++        this._text = null;
++
++        /**
++         * Private tracker for the current style.
++         *
++         * @member {object}
++         * @private
++         */
++        this._style = null;
++        /**
++         * Private listener to track style changes.
++         *
++         * @member {Function}
++         * @private
++         */
++        this._styleListener = null;
++
++        /**
++         * Private tracker for the current font.
++         *
++         * @member {string}
++         * @private
++         */
++        this._font = '';
++
++        this.text = text;
++        this.style = style;
++
++        this.localStyleID = -1;
++    }
++
++    /**
++     * Renders text and updates it when needed.
++     *
++     * @private
++     * @param {boolean} respectDirty - Whether to abort updating the text if the Text isn't dirty and the function is called.
++     */
++    updateText(respectDirty)
++    {
++        const style = this._style;
++
++        // check if style has changed..
++        if (this.localStyleID !== style.styleID)
++        {
++            this.dirty = true;
++            this.localStyleID = style.styleID;
++        }
++
++        if (!this.dirty && respectDirty)
++        {
++            return;
++        }
++
++        this._font = Text.getFontStyle(style);
++
++        this.context.font = this._font;
++
++        // word wrap
++        // preserve original text
++        const outputText = style.wordWrap ? this.wordWrap(this._text) : this._text;
++
++        // split text into lines
++        const lines = outputText.split(/(?:\r\n|\r|\n)/);
++
++        // calculate text width
++        const lineWidths = new Array(lines.length);
++        let maxLineWidth = 0;
++        const fontProperties = Text.calculateFontProperties(this._font);
++
++        for (let i = 0; i < lines.length; i++)
++        {
++            const lineWidth = this.context.measureText(lines[i]).width + ((lines[i].length - 1) * style.letterSpacing);
++
++            lineWidths[i] = lineWidth;
++            maxLineWidth = Math.max(maxLineWidth, lineWidth);
++        }
++
++        let width = maxLineWidth + style.strokeThickness;
++
++        if (style.dropShadow)
++        {
++            width += style.dropShadowDistance;
++        }
++
++        this.canvas.width = Math.ceil((width + (style.padding * 2)) * this.resolution);
++
++        // calculate text height
++        const lineHeight = style.lineHeight || fontProperties.fontSize + style.strokeThickness;
++
++        let height = Math.max(lineHeight, fontProperties.fontSize + style.strokeThickness)
++            + ((lines.length - 1) * lineHeight);
++
++        if (style.dropShadow)
++        {
++            height += style.dropShadowDistance;
++        }
++
++        this.canvas.height = Math.ceil((height + (style.padding * 2)) * this.resolution);
++
++        this.context.scale(this.resolution, this.resolution);
++
++        this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
++
++        this.context.font = this._font;
++        this.context.strokeStyle = style.stroke;
++        this.context.lineWidth = style.strokeThickness;
++        this.context.textBaseline = style.textBaseline;
++        this.context.lineJoin = style.lineJoin;
++        this.context.miterLimit = style.miterLimit;
++
++        let linePositionX;
++        let linePositionY;
++
++        if (style.dropShadow)
++        {
++            this.context.shadowBlur = style.dropShadowBlur;
++            this.context.globalAlpha = style.dropShadowAlpha;
++
++            if (style.dropShadowBlur > 0)
++            {
++                this.context.shadowColor = style.dropShadowColor;
++            }
++            else
++            {
++                this.context.fillStyle = style.dropShadowColor;
++            }
++
++            const xShadowOffset = Math.cos(style.dropShadowAngle) * style.dropShadowDistance;
++            const yShadowOffset = Math.sin(style.dropShadowAngle) * style.dropShadowDistance;
++
++            for (let i = 0; i < lines.length; i++)
++            {
++                linePositionX = style.strokeThickness / 2;
++                linePositionY = ((style.strokeThickness / 2) + (i * lineHeight)) + fontProperties.ascent;
++
++                if (style.align === 'right')
++                {
++                    linePositionX += maxLineWidth - lineWidths[i];
++                }
++                else if (style.align === 'center')
++                {
++                    linePositionX += (maxLineWidth - lineWidths[i]) / 2;
++                }
++
++                if (style.fill)
++                {
++                    this.drawLetterSpacing(
++                        lines[i],
++                        linePositionX + xShadowOffset + style.padding, linePositionY + yShadowOffset + style.padding
++                    );
++
++                    if (style.stroke && style.strokeThickness)
++                    {
++                        this.context.strokeStyle = style.dropShadowColor;
++                        this.drawLetterSpacing(
++                            lines[i],
++                            linePositionX + xShadowOffset + style.padding, linePositionY + yShadowOffset + style.padding,
++                            true
++                        );
++                        this.context.strokeStyle = style.stroke;
++                    }
++                }
++            }
++        }
++
++        // reset the shadow blur and alpha that was set by the drop shadow, for the regular text
++        this.context.shadowBlur = 0;
++        this.context.globalAlpha = 1;
++
++        // set canvas text styles
++        this.context.fillStyle = this._generateFillStyle(style, lines);
++
++        // draw lines line by line
++        for (let i = 0; i < lines.length; i++)
++        {
++            linePositionX = style.strokeThickness / 2;
++            linePositionY = ((style.strokeThickness / 2) + (i * lineHeight)) + fontProperties.ascent;
++
++            if (style.align === 'right')
++            {
++                linePositionX += maxLineWidth - lineWidths[i];
++            }
++            else if (style.align === 'center')
++            {
++                linePositionX += (maxLineWidth - lineWidths[i]) / 2;
++            }
++
++            if (style.stroke && style.strokeThickness)
++            {
++                this.drawLetterSpacing(lines[i], linePositionX + style.padding, linePositionY + style.padding, true);
++            }
++
++            if (style.fill)
++            {
++                this.drawLetterSpacing(lines[i], linePositionX + style.padding, linePositionY + style.padding);
++            }
++        }
++
++        this.updateTexture();
++    }
++
++    /**
++     * Render the text with letter-spacing.
++     * @param {string} text - The text to draw
++     * @param {number} x - Horizontal position to draw the text
++     * @param {number} y - Vertical position to draw the text
++     * @param {boolean} [isStroke=false] - Is this drawing for the outside stroke of the
++     *  text? If not, it's for the inside fill
++     * @private
++     */
++    drawLetterSpacing(text, x, y, isStroke = false)
++    {
++        const style = this._style;
++
++        // letterSpacing of 0 means normal
++        const letterSpacing = style.letterSpacing;
++
++        if (letterSpacing === 0)
++        {
++            if (isStroke)
++            {
++                this.context.strokeText(text, x, y);
++            }
++            else
++            {
++                this.context.fillText(text, x, y);
++            }
++
++            return;
++        }
++
++        const characters = String.prototype.split.call(text, '');
++        let currentPosition = x;
++        let index = 0;
++        let current = '';
++
++        while (index < text.length)
++        {
++            current = characters[index++];
++            if (isStroke)
++            {
++                this.context.strokeText(current, currentPosition, y);
++            }
++            else
++            {
++                this.context.fillText(current, currentPosition, y);
++            }
++            currentPosition += this.context.measureText(current).width + letterSpacing;
++        }
++    }
++
++    /**
++     * Updates texture size based on canvas size
++     *
++     * @private
++     */
++    updateTexture()
++    {
++        if (this._style.trim)
++        {
++            const trimmed = trimCanvas(this.canvas);
++
++            this.canvas.width = trimmed.width;
++            this.canvas.height = trimmed.height;
++            this.context.putImageData(trimmed.data, 0, 0);
++        }
++
++        const texture = this._texture;
++        const style = this._style;
++
++        texture.baseTexture.hasLoaded = true;
++        texture.baseTexture.resolution = this.resolution;
++
++        texture.baseTexture.realWidth = this.canvas.width;
++        texture.baseTexture.realHeight = this.canvas.height;
++        texture.baseTexture.width = this.canvas.width / this.resolution;
++        texture.baseTexture.height = this.canvas.height / this.resolution;
++        texture.trim.width = texture._frame.width = this.canvas.width / this.resolution;
++        texture.trim.height = texture._frame.height = this.canvas.height / this.resolution;
++
++        texture.trim.x = -style.padding;
++        texture.trim.y = -style.padding;
++
++        texture.orig.width = texture._frame.width - (style.padding * 2);
++        texture.orig.height = texture._frame.height - (style.padding * 2);
++
++        // call sprite onTextureUpdate to update scale if _width or _height were set
++        this._onTextureUpdate();
++
++        texture.baseTexture.emit('update', texture.baseTexture);
++
++        this.dirty = false;
++    }
++
++    /**
++     * Renders the object using the WebGL renderer
++     *
++     * @param {PIXI.WebGLRenderer} renderer - The renderer
++     */
++    renderWebGL(renderer)
++    {
++        if (this.resolution !== renderer.resolution)
++        {
++            this.resolution = renderer.resolution;
++            this.dirty = true;
++        }
++
++        this.updateText(true);
++
++        super.renderWebGL(renderer);
++    }
++
++    /**
++     * Renders the object using the Canvas renderer
++     *
++     * @private
++     * @param {PIXI.CanvasRenderer} renderer - The renderer
++     */
++    _renderCanvas(renderer)
++    {
++        if (this.resolution !== renderer.resolution)
++        {
++            this.resolution = renderer.resolution;
++            this.dirty = true;
++        }
++
++        this.updateText(true);
++
++        super._renderCanvas(renderer);
++    }
++
++    /**
++     * Applies newlines to a string to have it optimally fit into the horizontal
++     * bounds set by the Text object's wordWrapWidth property.
++     *
++     * @private
++     * @param {string} text - String to apply word wrapping to
++     * @return {string} New string with new lines applied where required
++     */
++    wordWrap(text)
++    {
++        // Greedy wrapping algorithm that will wrap words as the line grows longer
++        // than its horizontal bounds.
++        let result = '';
++        const style = this._style;
++        const lines = text.split('\n');
++        const wordWrapWidth = style.wordWrapWidth;
++
++        for (let i = 0; i < lines.length; i++)
++        {
++            let spaceLeft = wordWrapWidth;
++            const words = lines[i].split(' ');
++
++            for (let j = 0; j < words.length; j++)
++            {
++                const wordWidth = this.context.measureText(words[j]).width;
++
++                if (style.breakWords && wordWidth > wordWrapWidth)
++                {
++                    // Word should be split in the middle
++                    const characters = words[j].split('');
++
++                    for (let c = 0; c < characters.length; c++)
++                    {
++                        const characterWidth = this.context.measureText(characters[c]).width;
++
++                        if (characterWidth > spaceLeft)
++                        {
++                            result += `\n${characters[c]}`;
++                            spaceLeft = wordWrapWidth - characterWidth;
++                        }
++                        else
++                        {
++                            if (c === 0)
++                            {
++                                result += ' ';
++                            }
++
++                            result += characters[c];
++                            spaceLeft -= characterWidth;
++                        }
++                    }
++                }
++                else
++                {
++                    const wordWidthWithSpace = wordWidth + this.context.measureText(' ').width;
++
++                    if (j === 0 || wordWidthWithSpace > spaceLeft)
++                    {
++                        // Skip printing the newline if it's the first word of the line that is
++                        // greater than the word wrap width.
++                        if (j > 0)
++                        {
++                            result += '\n';
++                        }
++                        result += words[j];
++                        spaceLeft = wordWrapWidth - wordWidth;
++                    }
++                    else
++                    {
++                        spaceLeft -= wordWidthWithSpace;
++                        result += ` ${words[j]}`;
++                    }
++                }
++            }
++
++            if (i < lines.length - 1)
++            {
++                result += '\n';
++            }
++        }
++
++        return result;
++    }
++
++    /**
++     * Gets the local bounds of the text object.
++     *
++     * @param {Rectangle} rect - The output rectangle.
++     * @return {Rectangle} The bounds.
++     */
++    getLocalBounds(rect)
++    {
++        this.updateText(true);
++
++        return super.getLocalBounds.call(this, rect);
++    }
++
++    /**
++     * calculates the bounds of the Text as a rectangle. The bounds calculation takes the worldTransform into account.
++     */
++    _calculateBounds()
++    {
++        this.updateText(true);
++        this.calculateVertices();
++        // if we have already done this on THIS frame.
++        this._bounds.addQuad(this.vertexData);
++    }
++
++    /**
++     * Method to be called upon a TextStyle change.
++     * @private
++     */
++    _onStyleChange()
++    {
++        this.dirty = true;
++    }
++
++    /**
++     * Generates the fill style. Can automatically generate a gradient based on the fill style being an array
++     *
++     * @private
++     * @param {object} style - The style.
++     * @param {string[]} lines - The lines of text.
++     * @return {string|number|CanvasGradient} The fill style
++     */
++    _generateFillStyle(style, lines)
++    {
++        if (!Array.isArray(style.fill))
++        {
++            return style.fill;
++        }
++
++        // cocoon on canvas+ cannot generate textures, so use the first colour instead
++        if (navigator.isCocoonJS)
++        {
++            return style.fill[0];
++        }
++
++        // the gradient will be evenly spaced out according to how large the array is.
++        // ['#FF0000', '#00FF00', '#0000FF'] would created stops at 0.25, 0.5 and 0.75
++        let gradient;
++        let totalIterations;
++        let currentIteration;
++        let stop;
++
++        const width = this.canvas.width / this.resolution;
++        const height = this.canvas.height / this.resolution;
++
++        // make a copy of the style settings, so we can manipulate them later
++        const fill = style.fill.slice();
++        const fillGradientStops = style.fillGradientStops.slice();
++
++        // wanting to evenly distribute the fills. So an array of 4 colours should give fills of 0.25, 0.5 and 0.75
++        if (!fillGradientStops.length)
++        {
++            const lengthPlus1 = fill.length + 1;
++
++            for (let i = 1; i < lengthPlus1; ++i)
++            {
++                fillGradientStops.push(i / lengthPlus1);
++            }
++        }
++
++        // stop the bleeding of the last gradient on the line above to the top gradient of the this line
++        // by hard defining the first gradient colour at point 0, and last gradient colour at point 1
++        fill.unshift(style.fill[0]);
++        fillGradientStops.unshift(0);
++
++        fill.push(style.fill[style.fill.length - 1]);
++        fillGradientStops.push(1);
++
++        if (style.fillGradientType === TEXT_GRADIENT.LINEAR_VERTICAL)
++        {
++            // start the gradient at the top center of the canvas, and end at the bottom middle of the canvas
++            gradient = this.context.createLinearGradient(width / 2, 0, width / 2, height);
++
++            // we need to repeat the gradient so that each individual line of text has the same vertical gradient effect
++            // ['#FF0000', '#00FF00', '#0000FF'] over 2 lines would create stops at 0.125, 0.25, 0.375, 0.625, 0.75, 0.875
++            totalIterations = (fill.length + 1) * lines.length;
++            currentIteration = 0;
++            for (let i = 0; i < lines.length; i++)
++            {
++                currentIteration += 1;
++                for (let j = 0; j < fill.length; j++)
++                {
++                    if (fillGradientStops[j])
++                    {
++                        stop = (fillGradientStops[j] / lines.length) + (i / lines.length);
++                    }
++                    else
++                    {
++                        stop = currentIteration / totalIterations;
++                    }
++                    gradient.addColorStop(stop, fill[j]);
++                    currentIteration++;
++                }
++            }
++        }
++        else
++        {
++            // start the gradient at the center left of the canvas, and end at the center right of the canvas
++            gradient = this.context.createLinearGradient(0, height / 2, width, height / 2);
++
++            // can just evenly space out the gradients in this case, as multiple lines makes no difference
++            // to an even left to right gradient
++            totalIterations = fill.length + 1;
++            currentIteration = 1;
++
++            for (let i = 0; i < fill.length; i++)
++            {
++                if (fillGradientStops[i])
++                {
++                    stop = fillGradientStops[i];
++                }
++                else
++                {
++                    stop = currentIteration / totalIterations;
++                }
++                gradient.addColorStop(stop, fill[i]);
++                currentIteration++;
++            }
++        }
++
++        return gradient;
++    }
++
++    /**
++     * Destroys this text object.
++     * Note* Unlike a Sprite, a Text object will automatically destroy its baseTexture and texture as
++     * the majority of the time the texture will not be shared with any other Sprites.
++     *
++     * @param {object|boolean} [options] - Options parameter. A boolean will act as if all options
++     *  have been set to that value
++     * @param {boolean} [options.children=false] - if set to true, all the children will have their
++     *  destroy method called as well. 'options' will be passed on to those calls.
++     * @param {boolean} [options.texture=true] - Should it destroy the current texture of the sprite as well
++     * @param {boolean} [options.baseTexture=true] - Should it destroy the base texture of the sprite as well
++     */
++    destroy(options)
++    {
++        if (typeof options === 'boolean')
++        {
++            options = { children: options };
++        }
++
++        options = Object.assign({}, defaultDestroyOptions, options);
++
++        super.destroy(options);
++
++        // make sure to reset the the context and canvas.. dont want this hanging around in memory!
++        this.context = null;
++        this.canvas = null;
++
++        this._style = null;
++    }
++
++    /**
++     * The width of the Text, setting this will actually modify the scale to achieve the value set
++     *
++     * @member {number}
++     */
++    get width()
++    {
++        this.updateText(true);
++
++        return Math.abs(this.scale.x) * this._texture.orig.width;
++    }
++
++    set width(value) // eslint-disable-line require-jsdoc
++    {
++        this.updateText(true);
++
++        const s = sign(this.scale.x) || 1;
++
++        this.scale.x = s * value / this._texture.orig.width;
++        this._width = value;
++    }
++
++    /**
++     * The height of the Text, setting this will actually modify the scale to achieve the value set
++     *
++     * @member {number}
++     */
++    get height()
++    {
++        this.updateText(true);
++
++        return Math.abs(this.scale.y) * this._texture.orig.height;
++    }
++
++    set height(value) // eslint-disable-line require-jsdoc
++    {
++        this.updateText(true);
++
++        const s = sign(this.scale.y) || 1;
++
++        this.scale.y = s * value / this._texture.orig.height;
++        this._height = value;
++    }
++
++    /**
++     * Set the style of the text. Set up an event listener to listen for changes on the style
++     * object and mark the text as dirty.
++     *
++     * @member {object|PIXI.TextStyle}
++     */
++    get style()
++    {
++        return this._style;
++    }
++
++    set style(style) // eslint-disable-line require-jsdoc
++    {
++        style = style || {};
++
++        if (style instanceof TextStyle)
++        {
++            this._style = style;
++        }
++        else
++        {
++            this._style = new TextStyle(style);
++        }
++
++        this.localStyleID = -1;
++        this.dirty = true;
++    }
++
++    /**
++     * Set the copy for the text object. To split a line you can use '\n'.
++     *
++     * @member {string}
++     */
++    get text()
++    {
++        return this._text;
++    }
++
++    set text(text) // eslint-disable-line require-jsdoc
++    {
++        text = String(text === '' || text === null || text === undefined ? ' ' : text);
++
++        if (this._text === text)
++        {
++            return;
++        }
++        this._text = text;
++        this.dirty = true;
++    }
++
++    /**
++     * Generates a font style string to use for Text.calculateFontProperties(). Takes the same parameter
++     * as Text.style.
++     *
++     * @static
++     * @param {object|TextStyle} style - String representing the style of the font
++     * @return {string} Font style string, for passing to Text.calculateFontProperties()
++     */
++    static getFontStyle(style)
++    {
++        style = style || {};
++
++        if (!(style instanceof TextStyle))
++        {
++            style = new TextStyle(style);
++        }
++
++        // build canvas api font setting from individual components. Convert a numeric style.fontSize to px
++        const fontSizeString = (typeof style.fontSize === 'number') ? `${style.fontSize}px` : style.fontSize;
++
++        // Clean-up fontFamily property by quoting each font name
++        // this will support font names with spaces
++        let fontFamilies = style.fontFamily;
++
++        if (!Array.isArray(style.fontFamily))
++        {
++            fontFamilies = style.fontFamily.split(',');
++        }
++
++        for (let i = fontFamilies.length - 1; i >= 0; i--)
++        {
++            // Trim any extra white-space
++            let fontFamily = fontFamilies[i].trim();
++
++            // Check if font already contains strings
++            if (!(/([\"\'])[^\'\"]+\1/).test(fontFamily))
++            {
++                fontFamily = `"${fontFamily}"`;
++            }
++            fontFamilies[i] = fontFamily;
++        }
++
++        return `${style.fontStyle} ${style.fontVariant} ${style.fontWeight} ${fontSizeString} ${fontFamilies.join(',')}`;
++    }
++
++    /**
++     * Calculates the ascent, descent and fontSize of a given fontStyle
++     *
++     * @static
++     * @param {string} fontStyle - String representing the style of the font
++     * @return {Object} Font properties object
++     */
++    static calculateFontProperties(fontStyle)
++    {
++        // as this method is used for preparing assets, don't recalculate things if we don't need to
++        if (Text.fontPropertiesCache[fontStyle])
++        {
++            return Text.fontPropertiesCache[fontStyle];
++        }
++
++        const properties = {};
++
++        const canvas = Text.fontPropertiesCanvas;
++        const context = Text.fontPropertiesContext;
++
++        context.font = fontStyle;
++
++        const width = Math.ceil(context.measureText('|MÉq').width);
++        let baseline = Math.ceil(context.measureText('M').width);
++        const height = 2 * baseline;
++
++        baseline = baseline * 1.4 | 0;
++
++        canvas.width = width;
++        canvas.height = height;
++
++        context.fillStyle = '#f00';
++        context.fillRect(0, 0, width, height);
++
++        context.font = fontStyle;
++
++        context.textBaseline = 'alphabetic';
++        context.fillStyle = '#000';
++        context.fillText('|MÉq', 0, baseline);
++
++        const imagedata = context.getImageData(0, 0, width, height).data;
++        const pixels = imagedata.length;
++        const line = width * 4;
++
++        let i = 0;
++        let idx = 0;
++        let stop = false;
++
++        // ascent. scan from top to bottom until we find a non red pixel
++        for (i = 0; i < baseline; ++i)
++        {
++            for (let j = 0; j < line; j += 4)
++            {
++                if (imagedata[idx + j] !== 255)
++                {
++                    stop = true;
++                    break;
++                }
++            }
++            if (!stop)
++            {
++                idx += line;
++            }
++            else
++            {
++                break;
++            }
++        }
++
++        properties.ascent = baseline - i;
++
++        idx = pixels - line;
++        stop = false;
++
++        // descent. scan from bottom to top until we find a non red pixel
++        for (i = height; i > baseline; --i)
++        {
++            for (let j = 0; j < line; j += 4)
++            {
++                if (imagedata[idx + j] !== 255)
++                {
++                    stop = true;
++                    break;
++                }
++            }
++
++            if (!stop)
++            {
++                idx -= line;
++            }
++            else
++            {
++                break;
++            }
++        }
++
++        properties.descent = i - baseline;
++        properties.fontSize = properties.ascent + properties.descent;
++
++        Text.fontPropertiesCache[fontStyle] = properties;
++
++        return properties;
++    }
++}
++
++Text.fontPropertiesCache = {};
++
++if (!isV8())
++{
++    Text.fontPropertiesCanvas = document.createElement('canvas');
++    Text.fontPropertiesContext = Text.fontPropertiesCanvas.getContext('2d');
++}
+diff --git a/src/core/text/pxscene/PXSceneTextRenderer.js b/src/core/text/pxscene/PXSceneTextRenderer.js
+new file mode 100644
+index 00000000..1fef811f
+--- /dev/null
++++ b/src/core/text/pxscene/PXSceneTextRenderer.js
+@@ -0,0 +1,188 @@
++import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
++import { string2hexV8 } from '../../utils';
++import { Point } from '../../math';
++
++/**
++ * Renderer dedicated to drawing and batching text for PXScene.
++ *
++ * @class
++ * @private
++ * @memberof PIXI
++ */
++export default class PXSceneTextRenderer
++{
++    /**
++     * @param {PIXI.PXSceneRenderer} renderer -The renderer sprite this batch works for.
++     */
++    constructor(renderer)
++    {
++        this.renderer = renderer;
++    }
++
++    /**
++     * Renders the text object.
++     *
++     * @param {PIXI.TextV8} text - the text to render
++     */
++    render(text)
++    {
++        const font = text._font;
++        let fontResource;
++
++        for (let i = 0; i < font.fontFamilies.length; ++i)
++        {
++            fontResource = text.fontResourceCache[font.fontFamilies[i].toLowerCase()];
++            if (fontResource)
++            {
++                break;
++            }
++        }
++        if (!fontResource)
++        {
++            return;
++        }
++
++        const style = text.style;
++
++        // Convert local coordinates to world coordinates
++        const point = new Point(text.x, text.y);
++        const globalPoint = text.parent.toGlobal(point);
++
++        // Calculate all attributes
++        if (text.renderedObject)
++        {
++            const renderedObject = text.renderedObject;
++
++            const attr = this._calcTextAttributes(globalPoint, text);
++
++            renderedObject.x = attr.x;
++            renderedObject.y = attr.y;
++            renderedObject.cx = attr.cx;
++            renderedObject.cy = attr.cy;
++            renderedObject.a = attr.a;
++            renderedObject.r = attr.r;
++            renderedObject.sx = attr.sx;
++            renderedObject.sy = attr.sy;
++        }
++        else
++        {
++            const attr = this._calcTextAttributes(globalPoint, text);
++
++            // Create a container first
++            text.renderedObject = this.renderer.view.create({
++                t: 'rect',
++                parent: this.renderer.context,
++                x: attr.x,
++                y: attr.y,
++                cx: attr.cx,
++                cy: attr.cy,
++                a: attr.a,
++                r: attr.r,
++                sx: attr.sx,
++                sy: attr.sy,
++                fillColor: 0x0,
++            });
++
++            const createTextStyle = {
++                t: 'textBox',
++                text: text.text,
++                wordWrap: !!style.wordWrap,
++                w: (!!style.wordWrap && style.wordWrapWidth) || 0,
++                pixelSize: font.fontSize,
++                font: fontResource,
++                parent: text.renderedObject,
++            };
++
++            if (style.dropShadow)
++            {
++                const shadowOffset = this._calcShadowOffset(style.dropShadowAngle, style.dropShadowDistance);
++
++                // Create shadow first.
++                createTextStyle.textColor = string2hexV8(style.dropShadowColor);
++                createTextStyle.x = shadowOffset.xOffset;
++                createTextStyle.y = shadowOffset.yOffset;
++                text.renderedObjectTextShadow = this.renderer.view.create(createTextStyle);
++            }
++
++            const textColor = Array.isArray(style.fill) ? style.fill[0] : style.fill;
++
++            createTextStyle.textColor = string2hexV8(textColor);
++            createTextStyle.x = 0;
++            createTextStyle.y = 0;
++            text.renderedObjectText = this.renderer.view.create(createTextStyle);
++
++            const textMeasure = fontResource.measureText(font.fontSize, text.text);
++
++            text.renderedObject.w = textMeasure.w;
++            text.renderedObject.h = textMeasure.h;
++        }
++    }
++
++    /**
++     * Calculate Text attribute.
++     *
++     * @param {Number} angle - Shadow angle
++     * @param {Number} distance - Shadow distance
++     * @return {Object} The x, y offset of the shadow.
++     * @private
++     */
++    _calcShadowOffset(angle, distance)
++    {
++        const xOffset = Math.cos(angle) * distance;
++        const yOffset = Math.sin(angle) * distance;
++
++        return {
++            xOffset,
++            yOffset,
++        };
++    }
++
++    /**
++     * Calculate Text attribute.
++     *
++     * @param {Point} globalPoint - Global Point of the text
++     * @param {TextV8} text - TextV8 object.
++     * @return {Object} The calculated attributes.
++     * @private
++     */
++    _calcTextAttributes(globalPoint, text)
++    {
++        const x = globalPoint.x;
++        const y = globalPoint.y;
++        const cx = 0;
++        const cy = 0;
++        const a = 1;
++        const worldTransform = {
++            skew: {},
++            scale: {},
++            position: {},
++        };
++
++        text.transform.worldTransform.decompose(worldTransform);
++        const r = worldTransform.rotation * (180 / Math.PI);
++        const sx = text.scale.x;
++        const sy = text.scale.y;
++
++        return {
++            x,
++            y,
++            cx,
++            cy,
++            a,
++            r,
++            sx,
++            sy,
++        };
++    }
++
++    /**
++     * destroy the text object.
++     *
++     */
++    destroy()
++    {
++        this.renderer = null;
++    }
++}
++
++PXSceneRenderer.registerPlugin('TextV8', PXSceneTextRenderer);
+diff --git a/src/core/textures/BaseTexture.js b/src/core/textures/BaseTexture.js
+index 71a992b5..d7abd3b0 100644
+--- a/src/core/textures/BaseTexture.js
++++ b/src/core/textures/BaseTexture.js
+@@ -1,6 +1,6 @@
+ import {
+     uid, getUrlFileExtension, decomposeDataUri, getSvgSize,
+-    getResolutionOfUrl, BaseTextureCache, TextureCache,
++    getResolutionOfUrl, BaseTextureCache, TextureCache, isV8,
+ } from '../utils';
+ import settings from '../settings';
+ import EventEmitter from 'eventemitter3';
+@@ -643,9 +643,9 @@ export default class BaseTexture extends EventEmitter
+         {
+             // new Image() breaks tex loading in some versions of Chrome.
+             // See https://code.google.com/p/chromium/issues/detail?id=238071
+-            const image = new Image();// document.createElement('img');
++            const image = isV8() ? {} : new Image();// document.createElement('img');
+ 
+-            if (crossorigin === undefined && imageUrl.indexOf('data:') !== 0)
++            if (!isV8() && crossorigin === undefined && imageUrl.indexOf('data:') !== 0)
+             {
+                 image.crossOrigin = determineCrossOrigin(imageUrl);
+             }
+diff --git a/src/core/textures/Texture.js b/src/core/textures/Texture.js
+index d5100756..2f1ccff8 100644
+--- a/src/core/textures/Texture.js
++++ b/src/core/textures/Texture.js
+@@ -3,7 +3,7 @@ import VideoBaseTexture from './VideoBaseTexture';
+ import TextureUvs from './TextureUvs';
+ import EventEmitter from 'eventemitter3';
+ import { Rectangle } from '../math';
+-import { TextureCache, BaseTextureCache, getResolutionOfUrl } from '../utils';
++import { TextureCache, BaseTextureCache, getResolutionOfUrl, isV8 } from '../utils';
+ 
+ /**
+  * A texture stores the information that represents an image or part of an image. It cannot be added
+@@ -89,7 +89,7 @@ export default class Texture extends EventEmitter
+          *
+          * @member {boolean}
+          */
+-        this.valid = false;
++        this.valid = isV8();
+ 
+         /**
+          * This will let a renderer know that a texture has been updated (used mainly for webGL uv updates)
+diff --git a/src/core/ticker/Ticker.js b/src/core/ticker/Ticker.js
+index d98a1f0d..8096f91d 100644
+--- a/src/core/ticker/Ticker.js
++++ b/src/core/ticker/Ticker.js
+@@ -1,9 +1,85 @@
+ import settings from '../settings';
+ import EventEmitter from 'eventemitter3';
++import {
++    isV8,
++} from '../utils';
+ 
+ // Internal event used by composed emitter
+ const TICK = 'tick';
+ 
++const ONE_FRAME_TIME = 16;
++
++let performance;
++let requestAnimationFrame;
++let cancelAnimationFrame;
++
++// Define some global functions
++if (isV8())
++{
++    // Date.now
++    if (!(Date.now && Date.prototype.getTime))
++    {
++        Date.now = function now()
++        {
++            return new Date().getTime();
++        };
++    }
++
++    // performance.now
++    if (!(performance && performance.now))
++    {
++        const startTime = Date.now();
++
++        if (!performance)
++        {
++            performance = {};
++        }
++
++        performance.now = () => Date.now() - startTime;
++    }
++
++    // requestAnimationFrame
++    let lastTime = Date.now();
++
++    if (!requestAnimationFrame)
++    {
++        requestAnimationFrame = (callback) =>
++        {
++            if (typeof callback !== 'function')
++            {
++                throw new TypeError(`${callback}is not a function`);
++            }
++
++            const currentTime = Date.now();
++            let delay = ONE_FRAME_TIME + lastTime - currentTime;
++
++            if (delay < 0)
++            {
++                delay = 0;
++            }
++
++            lastTime = currentTime;
++
++            return setTimeout(() =>
++            {
++                lastTime = Date.now();
++                callback(performance.now());
++            }, delay);
++        };
++    }
++
++    if (!cancelAnimationFrame)
++    {
++        cancelAnimationFrame = (id) => clearTimeout(id);
++    }
++}
++else
++{
++    performance = window.performance;
++    requestAnimationFrame = window.requestAnimationFrame;
++    cancelAnimationFrame = window.cancelAnimationFrame;
++}
++
+ /**
+  * A Ticker class that runs an update loop that other objects listen to.
+  * This class is composed around an EventEmitter object to add listeners
+@@ -132,7 +208,7 @@ export default class Ticker
+                 // Listener side effects may have modified ticker state.
+                 if (this.started && this._requestId === null && this._emitter.listeners(TICK, true))
+                 {
+-                    this._requestId = requestAnimationFrame(this._tick);
++                    this._requestId = requestAnimationFrame(this._tick); // eslint-disable-line block-scoped-var
+                 }
+             }
+         };
+@@ -150,8 +226,8 @@ export default class Ticker
+         if (this._requestId === null && this._emitter.listeners(TICK, true))
+         {
+             // ensure callbacks get correct delta
+-            this.lastTime = performance.now();
+-            this._requestId = requestAnimationFrame(this._tick);
++            this.lastTime = performance.now(); // eslint-disable-line block-scoped-var
++            this._requestId = requestAnimationFrame(this._tick); // eslint-disable-line block-scoped-var
+         }
+     }
+ 
+@@ -164,7 +240,7 @@ export default class Ticker
+     {
+         if (this._requestId !== null)
+         {
+-            cancelAnimationFrame(this._requestId);
++            cancelAnimationFrame(this._requestId); // eslint-disable-line block-scoped-var
+             this._requestId = null;
+         }
+     }
+@@ -287,7 +363,7 @@ export default class Ticker
+      *
+      * @param {number} [currentTime=performance.now()] - the current time of execution
+      */
+-    update(currentTime = performance.now())
++    update(currentTime = performance.now()) // eslint-disable-line block-scoped-var
+     {
+         let elapsedMS;
+ 
+diff --git a/src/core/utils/canUploadSameBuffer.js b/src/core/utils/canUploadSameBuffer.js
+index eb4ae5cb..e48dff20 100644
+--- a/src/core/utils/canUploadSameBuffer.js
++++ b/src/core/utils/canUploadSameBuffer.js
+@@ -3,7 +3,7 @@ export default function canUploadSameBuffer()
+ 	// Uploading the same buffer multiple times in a single frame can cause perf issues.
+ 	// Apparent on IOS so only check for that at the moment
+ 	// this check may become more complex if this issue pops up elsewhere.
+-    const ios = !!navigator.platform && (/iPad|iPhone|iPod/).test(navigator.platform);
++    const ios = typeof navigator !== 'undefined' && !!navigator.platform && (/iPad|iPhone|iPod/).test(navigator.platform);
+ 
+     return !ios;
+ }
+diff --git a/src/core/utils/index.js b/src/core/utils/index.js
+index 2f9c71b7..b58a3439 100644
+--- a/src/core/utils/index.js
++++ b/src/core/utils/index.js
+@@ -86,6 +86,50 @@ export function hex2string(hex)
+ }
+ 
+ /**
++ * Converts string to a hex number color
++ * For V8.
++ *
++ * @memberof PIXI.utils
++ * @function string2hexV8
++ * @param {String} str - The string color.
++ * @return {Number} Number in hex
++ */
++export function string2hexV8(str)
++{
++    if (str[0] === '#')
++    {
++        str = str.substr(1);
++        const color = Number.parseInt(str, 16);
++
++        if (color <= 0xFFFFFF)
++        {
++            return (color << 8) | 0xFF;
++        }
++
++        return color;
++    }
++    else if (str === 'black')
++    {
++        return 0x000000FF;
++    }
++    else if (str === 'red')
++    {
++        return 0xFF0000FF;
++    }
++    else if (str === 'green')
++    {
++        return 0x00FF00FF;
++    }
++    else if (str === 'blue')
++    {
++        return 0x00FF00FF;
++    }
++
++    // By default it is black.
++    return 0x000000FF;
++}
++
++/**
+  * Converts a color as an [R, G, B] array to a hex number
+  *
+  * @memberof PIXI.utils
+@@ -99,6 +143,32 @@ export function rgb2hex(rgb)
+ }
+ 
+ /**
++ * Converts a color as an [R, G, B, A] array to a hex number
++ *
++ * @memberof PIXI.utils
++ * @function rgba2hex
++ * @param {number[]} rgba - rgba array
++ * @return {number} The color number
++ */
++export function rgba2hex(rgba)
++{
++    return (((rgba[0] * 255) << 24) + ((rgba[1] * 255) << 16) + ((rgba[2] * 255) << 8) + (rgba[3] * 255) + 255);
++}
++
++/**
++ * Converts a color as an [R, G, B] array to an [R, G, B, A] array
++ *
++ * @memberof PIXI.utils
++ * @function rgb2rgba
++ * @param {number[]} rgb - rgb array
++ * @return {number} The [R, G, B, A] array
++ */
++export function rgb2rgba(rgb)
++{
++    return [rgb[0], rgb[1], rgb[2], 0];
++}
++
++/**
+  * get the resolution / device pixel ratio of an asset by looking for the prefix
+  * used by spritesheets and image urls
+  *
+@@ -234,7 +304,7 @@ export function sayHello(type)
+         return;
+     }
+ 
+-    if (navigator.userAgent.toLowerCase().indexOf('chrome') > -1)
++    if (!isV8() && navigator.userAgent.toLowerCase().indexOf('chrome') > -1)
+     {
+         const args = [
+             `\n %c %c %c Pixi.js ${VERSION} - ✰ ${type} ✰  %c  %c  http://www.pixijs.com/  %c %c ♥%c♥%c♥ \n\n`,
+@@ -251,7 +321,7 @@ export function sayHello(type)
+ 
+         window.console.log.apply(console, args);
+     }
+-    else if (window.console)
++    else if (!isV8() && window.console)
+     {
+         window.console.log(`Pixi.js ${VERSION} - ${type} - http://www.pixijs.com/`);
+     }
+@@ -303,6 +373,18 @@ export function isWebGLSupported()
+ }
+ 
+ /**
++ * Determines if the environment is V8
++ *
++ * @memberof PIXI.utils
++ * @function isV8
++ * @returns {boolean} true if the environment is V8, false otherwise
++ */
++export function isV8()
++{
++    return typeof window === 'undefined';
++}
++
++/**
+  * Returns sign of number
+  *
+  * @memberof PIXI.utils
+diff --git a/src/extras/AnimatedSpriteV8.js b/src/extras/AnimatedSpriteV8.js
+new file mode 100644
+index 00000000..7a937dd5
+--- /dev/null
++++ b/src/extras/AnimatedSpriteV8.js
+@@ -0,0 +1,298 @@
++import * as core from '../core';
++
++/**
++ * An AnimatedSprite is a simple way to display an animation depicted by a list of textures.
++ *
++ * This version could be only used in V8 environment. It is only used for loading sprite frames.
++ *
++ * @class
++ * @extends PIXI.Sprite
++ * @memberof PIXI.extras
++ */
++export default class AnimatedSpriteV8 extends core.Sprite
++{
++    /**
++     * @param {PIXI.Texture} texture - the texture of the frames of that sprite.
++     * @param {Array} frames - frame data
++     * @param {boolean} [autoUpdate=true] - Whether use PIXI.ticker.shared to auto update animation time.
++     */
++    constructor(texture, frames, autoUpdate)
++    {
++        super(texture);
++
++        /**
++         * @private
++         */
++        this._frames = frames;
++
++        /**
++         * @private
++         */
++        this._durations = null;
++
++        /**
++         * `true` uses PIXI.ticker.shared to auto update animation time.
++         * @type {boolean}
++         * @default true
++         * @private
++         */
++        this._autoUpdate = autoUpdate !== false;
++
++        /**
++         * The speed that the AnimatedSprite will play at. Higher is faster, lower is slower
++         *
++         * @member {number}
++         * @default 1
++         */
++        this.animationSpeed = 1;
++
++        /**
++         * Whether or not the animate sprite repeats after playing.
++         *
++         * @member {boolean}
++         * @default true
++         */
++        this.loop = true;
++
++        /**
++         * Function to call when a AnimatedSprite finishes playing
++         *
++         * @member {Function}
++         */
++        this.onComplete = null;
++
++        /**
++         * Function to call when a AnimatedSprite changes which texture is being rendered
++         *
++         * @member {Function}
++         */
++        this.onFrameChange = null;
++
++        /**
++         * Elapsed time since animation has been started, used internally to display current texture
++         *
++         * @member {number}
++         * @private
++         */
++        this._currentTime = 0;
++
++        /**
++         * Indicates if the AnimatedSprite is currently playing
++         *
++         * @member {boolean}
++         * @readonly
++         */
++        this.playing = false;
++
++        /**
++         * Plugin that is responsible for rendering this element.
++         * Allows to customize the rendering process without overriding '_renderWebGL' & '_renderCanvas' methods.
++         *
++         * @member {string}
++         * @default 'AnimatedSpriteV8'
++         */
++        this.pluginName = 'AnimatedSpriteV8';
++    }
++
++    /**
++     * Stops the AnimatedSprite
++     *
++     */
++    stop()
++    {
++        if (!this.playing)
++        {
++            return;
++        }
++
++        this.playing = false;
++        if (this._autoUpdate)
++        {
++            core.ticker.shared.remove(this.update, this);
++        }
++    }
++
++    /**
++     * Plays the AnimatedSprite
++     *
++     */
++    play()
++    {
++        if (this.playing)
++        {
++            return;
++        }
++
++        this.playing = true;
++        if (this._autoUpdate)
++        {
++            core.ticker.shared.add(this.update, this);
++        }
++    }
++
++    /**
++     * Stops the AnimatedSprite and goes to a specific frame
++     *
++     * @param {number} frameNumber - frame index to stop at
++     */
++    gotoAndStop(frameNumber)
++    {
++        this.stop();
++
++        const previousFrame = this.currentFrame;
++
++        this._currentTime = frameNumber;
++
++        if (previousFrame !== this.currentFrame)
++        {
++            this.exture();
++        }
++    }
++
++    /**
++     * Goes to a specific frame and begins playing the AnimatedSprite
++     *
++     * @param {number} frameNumber - frame index to start at
++     */
++    gotoAndPlay(frameNumber)
++    {
++        const previousFrame = this.currentFrame;
++
++        this._currentTime = frameNumber;
++
++        if (previousFrame !== this.currentFrame)
++        {
++            this.updateTexture();
++        }
++
++        this.play();
++    }
++
++    /**
++     * Updates the object transform for rendering.
++     *
++     * @private
++     * @param {number} deltaTime - Time since last tick.
++     */
++    update(deltaTime)
++    {
++        const elapsed = this.animationSpeed * deltaTime;
++        const previousFrame = this.currentFrame;
++
++        if (this._durations !== null)
++        {
++            let lag = this._currentTime % 1 * this._durations[this.currentFrame];
++
++            lag += elapsed / 60 * 1000;
++
++            while (lag < 0)
++            {
++                this._currentTime--;
++                lag += this._durations[this.currentFrame];
++            }
++
++            const sign = Math.sign(this.animationSpeed * deltaTime);
++
++            this._currentTime = Math.floor(this._currentTime);
++
++            while (lag >= this._durations[this.currentFrame])
++            {
++                lag -= this._durations[this.currentFrame] * sign;
++                this._currentTime += sign;
++            }
++
++            this._currentTime += lag / this._durations[this.currentFrame];
++        }
++        else
++        {
++            this._currentTime += elapsed;
++        }
++
++        if (this._currentTime < 0 && !this.loop)
++        {
++            this.gotoAndStop(0);
++
++            if (this.onComplete)
++            {
++                this.onComplete();
++            }
++        }
++        else if (this._currentTime >= this._frames.length && !this.loop)
++        {
++            this.gotoAndStop(this._frames.length - 1);
++
++            if (this.onComplete)
++            {
++                this.onComplete();
++            }
++        }
++        else if (previousFrame !== this.currentFrame)
++        {
++            this.updateTexture();
++        }
++    }
++
++    /**
++     * Updates the displayed texture to match the current frame index
++     *
++     * @private
++     */
++    updateTexture()
++    {
++        if (this.onFrameChange)
++        {
++            this.onFrameChange(this.currentFrame);
++        }
++    }
++
++    /**
++     * Stops the AnimatedSprite and destroys it
++     *
++     */
++    destroy()
++    {
++        this.stop();
++        super.destroy();
++    }
++
++    /**
++     * totalFrames is the total number of frames in the AnimatedSprite. This is the same as number of textures
++     * assigned to the AnimatedSprite.
++     *
++     * @readonly
++     * @member {number}
++     * @default 0
++     */
++    get totalFrames()
++    {
++        return this._frames.length;
++    }
++
++    /**
++     * The AnimatedSprites current frame index
++     *
++     * @member {number}
++     * @readonly
++     */
++    get currentFrame()
++    {
++        let currentFrame = Math.floor(this._currentTime) % this._frames.length;
++
++        if (currentFrame < 0)
++        {
++            currentFrame += this._frames.length;
++        }
++
++        return currentFrame;
++    }
++
++    /**
++     * Get the current frame data.
++     *
++     * @return {Object} Current frame data.
++     */
++    getCurrentFrameData()
++    {
++        return this._frames[this.currentFrame];
++    }
++}
+diff --git a/src/extras/index.js b/src/extras/index.js
+index bbd8bbf2..90199883 100644
+--- a/src/extras/index.js
++++ b/src/extras/index.js
+@@ -3,7 +3,10 @@
+  */
+ export { default as TextureTransform } from './TextureTransform';
+ export { default as AnimatedSprite } from './AnimatedSprite';
++export { default as AnimatedSpriteV8 } from './AnimatedSpriteV8';
++export { default as PXSceneAnimatedSpriteRenderer } from './pxscene/PXSceneAnimatedSpriteRenderer';
+ export { default as TilingSprite } from './TilingSprite';
++export { default as PXSceneTilingSpriteRenderer } from './pxscene/PXSceneTilingSpriteRenderer';
+ export { default as TilingSpriteRenderer } from './webgl/TilingSpriteRenderer';
+ export { default as BitmapText } from './BitmapText';
+ 
+diff --git a/src/extras/pxscene/PXSceneAnimatedSpriteRenderer.js b/src/extras/pxscene/PXSceneAnimatedSpriteRenderer.js
+new file mode 100644
+index 00000000..9e906d52
+--- /dev/null
++++ b/src/extras/pxscene/PXSceneAnimatedSpriteRenderer.js
+@@ -0,0 +1,186 @@
++import PXSceneRenderer from '../../core/renderers/pxscene/PXSceneRenderer';
++
++import { Point } from '../../core/math';
++
++/**
++ * Renderer dedicated to drawing and batching sprites for PXScene.
++ *
++ * @class
++ * @private
++ * @memberof PIXI
++ */
++export default class PXSceneAnimatedSpriteRenderer
++{
++    /**
++     * @param {PIXI.PXSceneRenderer} renderer -The renderer sprite this batch works for.
++     */
++    constructor(renderer)
++    {
++        this.renderer = renderer;
++    }
++
++    /**
++     * Renders the sprite object.
++     *
++     * @param {PIXI.Sprite} sprite - the sprite to render when using this spritebatch
++     */
++    render(sprite)
++    {
++        const texture = sprite._texture;
++        let spriteWidth = 0;
++        let spriteHeight = 0;
++
++        // Convert local coordinates to world coordinates
++        const point = new Point(sprite.x,
++            sprite.y);
++        const globalPoint = sprite.parent.toGlobal(point);
++        const frameData = sprite.getCurrentFrameData();
++        let maskRect;
++
++        if (frameData.trimmed)
++        {
++            maskRect = {
++                x: frameData.frame.x,
++                y: frameData.frame.y,
++                w: frameData.spriteSourceSize.w,
++                h: frameData.spriteSourceSize.h,
++            };
++        }
++        else
++        {
++            maskRect = {
++                x: frameData.frame.x - frameData.spriteSourceSize.x,
++                y: frameData.frame.y - frameData.spriteSourceSize.y,
++                w: frameData.sourceSize.w,
++                h: frameData.sourceSize.h,
++            };
++        }
++
++        // Calculate all attributes
++        if (sprite.renderedObject)
++        {
++            const renderedObject = sprite.renderedObject;
++
++            spriteWidth = maskRect.w;
++            spriteHeight = maskRect.h;
++
++            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
++
++            renderedObject.x = attr.x;
++            renderedObject.y = attr.y;
++            renderedObject.cx = attr.cx;
++            renderedObject.cy = attr.cy;
++            renderedObject.a = attr.a;
++            renderedObject.r = attr.r;
++            renderedObject.sx = attr.sx;
++            renderedObject.sy = attr.sy;
++            renderedObject.w = spriteWidth;
++            renderedObject.h = spriteHeight;
++
++            const renderedObjectMask = sprite.renderedObjectMask;
++
++            renderedObjectMask.w = spriteWidth;
++            renderedObjectMask.h = spriteHeight;
++
++            const renderedObjectSprite = sprite.renderedObjectSprite;
++
++            renderedObjectSprite.x = -maskRect.x;
++            renderedObjectSprite.y = -maskRect.y;
++        }
++        else
++        {
++            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
++
++            sprite.renderedObject = this.renderer.view.create({
++                t: 'rect',
++                parent: this.renderer.context,
++                x: attr.x,
++                y: attr.y,
++                cx: attr.cx,
++                cy: attr.cy,
++                a: attr.a,
++                r: attr.r,
++                sx: attr.sx,
++                sy: attr.sy,
++                w: maskRect.w,
++                h: maskRect.h,
++                fillColor: 0x0,
++            });
++
++            sprite.renderedObjectMask = this.renderer.view.create({
++                t: 'rect',
++                parent: sprite.renderedObject,
++                x: 0,
++                y: 0,
++                cx: attr.cx,
++                cy: attr.cy,
++                w: maskRect.w,
++                h: maskRect.h,
++                fillColor: 0xFFFF00FF,
++                mask: true,
++                draw: false,
++            });
++
++            sprite.renderedObjectSprite = this.renderer.view.create({
++                t: 'image',
++                parent: sprite.renderedObject,
++                x: -maskRect.x,
++                y: -maskRect.y,
++                cx: attr.cx,
++                cy: attr.cy,
++                url: texture.baseTexture.source.src,
++            });
++        }
++    }
++
++    /**
++     * Calculate sprite attribute.
++     *
++     * @param {Point} globalPoint - Global Point of the sprite
++     * @param {Number} spriteWidth - The width of the sprite
++     * @param {Number} spriteHeight - The height of the sprite
++     * @param {Object} sprite - The sprite object
++     * @return {Object} The calculated attributes.
++     * @private
++     */
++    _calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite)
++    {
++        const x = globalPoint.x - (spriteWidth * sprite.anchor.x);
++        const y = globalPoint.y - (spriteHeight * sprite.anchor.y);
++        const cx = spriteWidth * sprite.anchor.x;
++        const cy = spriteHeight * sprite.anchor.y;
++        const a = spriteWidth > 0 ? 1 : 0;
++        const worldTransform = {
++            skew: {},
++            scale: {},
++            position: {},
++        };
++
++        sprite.transform.worldTransform.decompose(worldTransform);
++        const r = worldTransform.rotation * (180 / Math.PI);
++        const sx = sprite.scale.x;
++        const sy = sprite.scale.y;
++
++        return {
++            x,
++            y,
++            cx,
++            cy,
++            a,
++            r,
++            sx,
++            sy,
++        };
++    }
++
++    /**
++     * destroy the sprite object.
++     *
++     */
++    destroy()
++    {
++        this.renderer = null;
++    }
++}
++
++PXSceneRenderer.registerPlugin('AnimatedSpriteV8', PXSceneAnimatedSpriteRenderer);
+diff --git a/src/extras/pxscene/PXSceneTilingSpriteRenderer.js b/src/extras/pxscene/PXSceneTilingSpriteRenderer.js
+new file mode 100644
+index 00000000..b7b54a5b
+--- /dev/null
++++ b/src/extras/pxscene/PXSceneTilingSpriteRenderer.js
+@@ -0,0 +1,155 @@
++import PXSceneRenderer from '../../core/renderers/pxscene/PXSceneRenderer';
++
++import { Point } from '../../core/math';
++
++/**
++ * Renderer dedicated to drawing and batching sprites for PXScene.
++ *
++ * @class
++ * @private
++ * @memberof PIXI
++ */
++export default class PXSceneTilingSpriteRenderer
++{
++    /**
++     * @param {PIXI.PXSceneRenderer} renderer -The renderer sprite this batch works for.
++     */
++    constructor(renderer)
++    {
++        this.renderer = renderer;
++    }
++
++    /**
++     * Renders the sprite object.
++     *
++     * @param {PIXI.Sprite} sprite - the sprite to render when using this spritebatch
++     */
++    render(sprite)
++    {
++        const texture = sprite._texture;
++
++        // Convert local coordinates to world coordinates
++        const point = new Point(sprite.x, sprite.y);
++        const globalPoint = sprite.parent.toGlobal(point);
++        let spriteWidth = 0;
++        let spriteHeight = 0;
++
++        // Calculate all attributes
++        if (sprite.imgResource && sprite.renderedObject)
++        {
++            const renderedObject = sprite.renderedObject;
++
++            spriteWidth = renderedObject.resource.w;
++            spriteHeight = renderedObject.resource.h;
++
++            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
++
++            renderedObject.x = attr.x;
++            renderedObject.y = attr.y;
++            renderedObject.cx = attr.cx;
++            renderedObject.cy = attr.cy;
++            renderedObject.a = attr.a;
++            renderedObject.r = attr.r;
++            renderedObject.sx = attr.sx;
++            renderedObject.sy = attr.sy;
++        }
++        else if (!sprite.imgResource)
++        {
++            sprite.imgResource = this.renderer.view.create({
++                t: 'imageResource',
++                url: texture.baseTexture.source.src,
++            });
++
++            sprite.imgResource.ready.then((imgResource) =>
++            {
++                const width = this.renderer.context.w;
++                const height = this.renderer.context.h;
++                const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
++
++                sprite.renderedObject = this.renderer.view.create({
++                    t: 'image',
++                    parent: this.renderer.context,
++                    x: attr.x,
++                    y: attr.y,
++                    cx: attr.cx,
++                    cy: attr.cy,
++                    a: attr.a,
++                    r: attr.r,
++                    sx: attr.sx,
++                    sy: attr.sy,
++                    stretchX: 2,
++                    stretchY: 2,
++                    w: width * 20, // spriteWidth,
++                    h: height * 20, // spriteHeight,
++                    resource: imgResource,
++                });
++            });
++        }
++    }
++
++    /**
++     * Calculate sprite attribute.
++     *
++     * @param {Point} globalPoint - Global Point of the sprite
++     * @param {Number} spriteWidth - The width of the sprite
++     * @param {Number} spriteHeight - The height of the sprite
++     * @param {Object} sprite - The sprite object
++     * @return {Object} The calculated attributes.
++     * @private
++     */
++    _calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite)
++    {
++        const width = this.renderer.context.w;
++        const height = this.renderer.context.h;
++
++        const imgWidth = sprite.imgResource.w;
++        const imgHeight = sprite.imgResource.h;
++
++        const numTileW = Math.ceil(width / imgWidth);
++        const numTileH = Math.ceil(height / imgHeight);
++
++        const modX = (sprite.tilePosition.x) % (numTileW * imgWidth);
++        const modY = (sprite.tilePosition.y) % (numTileH * imgHeight);
++
++        const cx = spriteWidth * sprite.anchor.x;
++        const cy = spriteHeight * sprite.anchor.y;
++        const x = globalPoint.x - (spriteWidth * sprite.anchor.x)
++            - (numTileW * imgWidth * 3) + (modX * sprite.tileScale.x);
++        const y = globalPoint.y - (spriteHeight * sprite.anchor.y)
++            - (numTileH * imgHeight * 3) + (modY * sprite.tileScale.y);
++
++        const a = imgWidth > 0 ? 1 : 0;
++        const worldTransform = {
++            skew: {},
++            scale: {},
++            position: {},
++        };
++
++        sprite.transform.worldTransform.decompose(worldTransform);
++        const r = worldTransform.rotation * (180 / Math.PI);
++        const sx = sprite.tileScale.x;
++        const sy = sprite.tileScale.y;
++
++        return {
++            x,
++            y,
++            cx,
++            cy,
++            a,
++            r,
++            sx,
++            sy,
++        };
++    }
++
++    /**
++     * destroy the sprite object.
++     *
++     */
++    destroy()
++    {
++        this.renderer = null;
++    }
++}
++
++PXSceneRenderer.registerPlugin('tilingSprite', PXSceneTilingSpriteRenderer);
+diff --git a/src/interaction/InteractionManager.js b/src/interaction/InteractionManager.js
+index ac742252..e02e0ac1 100644
+--- a/src/interaction/InteractionManager.js
++++ b/src/interaction/InteractionManager.js
+@@ -4,6 +4,7 @@ import InteractionEvent from './InteractionEvent';
+ import InteractionTrackingData from './InteractionTrackingData';
+ import EventEmitter from 'eventemitter3';
+ import interactiveTarget from './interactiveTarget';
++import { isV8 } from '../core/utils';
+ 
+ // Mix interactiveTarget into core.DisplayObject.prototype, after deprecation has been handled
+ core.utils.mixins.delayMixin(
+@@ -144,7 +145,7 @@ export default class InteractionManager extends EventEmitter
+          * @readonly
+          * @member {boolean}
+          */
+-        this.supportsTouchEvents = 'ontouchstart' in window;
++        this.supportsTouchEvents = (!isV8() && ('ontouchstart' in window));
+ 
+         /**
+          * Does the device support pointer events
+@@ -153,7 +154,7 @@ export default class InteractionManager extends EventEmitter
+          * @readonly
+          * @member {boolean}
+          */
+-        this.supportsPointerEvents = !!window.PointerEvent;
++        this.supportsPointerEvents = (!isV8() && !!window.PointerEvent);
+ 
+         // this will make it so that you don't have to call bind all the time
+ 
+@@ -489,44 +490,55 @@ export default class InteractionManager extends EventEmitter
+ 
+         core.ticker.shared.add(this.update, this);
+ 
+-        if (window.navigator.msPointerEnabled)
++        if (isV8())
+         {
+-            this.interactionDOMElement.style['-ms-content-zooming'] = 'none';
+-            this.interactionDOMElement.style['-ms-touch-action'] = 'none';
++            this.interactionDOMElement.on('onMouseMove', this.onPointerMove);
++            this.interactionDOMElement.on('onMouseDown', this.onPointerDown);
++            this.interactionDOMElement.on('onMouseEnter', this.onPointerOut);
++            this.interactionDOMElement.on('onMouseLeave', this.onPointerOver);
++            this.interactionDOMElement.on('onMouseUp', this.onPointerUp);
+         }
+-        else if (this.supportsPointerEvents)
+-        {
+-            this.interactionDOMElement.style['touch-action'] = 'none';
+-        }
+-
+-        /**
+-         * These events are added first, so that if pointer events are normalised, they are fired
+-         * in the same order as non-normalised events. ie. pointer event 1st, mouse / touch 2nd
+-         */
+-        if (this.supportsPointerEvents)
+-        {
+-            window.document.addEventListener('pointermove', this.onPointerMove, true);
+-            this.interactionDOMElement.addEventListener('pointerdown', this.onPointerDown, true);
+-            this.interactionDOMElement.addEventListener('pointerout', this.onPointerOut, true);
+-            this.interactionDOMElement.addEventListener('pointerover', this.onPointerOver, true);
+-            window.addEventListener('pointercancel', this.onPointerCancel, true);
+-            window.addEventListener('pointerup', this.onPointerUp, true);
+-        }
+-
+         else
+         {
+-            window.document.addEventListener('mousemove', this.onPointerMove, true);
+-            this.interactionDOMElement.addEventListener('mousedown', this.onPointerDown, true);
+-            this.interactionDOMElement.addEventListener('mouseout', this.onPointerOut, true);
+-            this.interactionDOMElement.addEventListener('mouseover', this.onPointerOver, true);
+-            window.addEventListener('mouseup', this.onPointerUp, true);
++            if (window.navigator.msPointerEnabled)
++            {
++                this.interactionDOMElement.style['-ms-content-zooming'] = 'none';
++                this.interactionDOMElement.style['-ms-touch-action'] = 'none';
++            }
++            else if (this.supportsPointerEvents)
++            {
++                this.interactionDOMElement.style['touch-action'] = 'none';
++            }
+ 
+-            if (this.supportsTouchEvents)
++            /**
++             * These events are added first, so that if pointer events are normalised, they are fired
++             * in the same order as non-normalised events. ie. pointer event 1st, mouse / touch 2nd
++             */
++            if (this.supportsPointerEvents)
++            {
++                window.document.addEventListener('pointermove', this.onPointerMove, true);
++                this.interactionDOMElement.addEventListener('pointerdown', this.onPointerDown, true);
++                this.interactionDOMElement.addEventListener('pointerout', this.onPointerOut, true);
++                this.interactionDOMElement.addEventListener('pointerover', this.onPointerOver, true);
++                window.addEventListener('pointercancel', this.onPointerCancel, true);
++                window.addEventListener('pointerup', this.onPointerUp, true);
++            }
++
++            else
+             {
+-                this.interactionDOMElement.addEventListener('touchstart', this.onPointerDown, true);
+-                this.interactionDOMElement.addEventListener('touchcancel', this.onPointerCancel, true);
+-                this.interactionDOMElement.addEventListener('touchend', this.onPointerUp, true);
+-                this.interactionDOMElement.addEventListener('touchmove', this.onPointerMove, true);
++                window.document.addEventListener('mousemove', this.onPointerMove, true);
++                this.interactionDOMElement.addEventListener('mousedown', this.onPointerDown, true);
++                this.interactionDOMElement.addEventListener('mouseout', this.onPointerOut, true);
++                this.interactionDOMElement.addEventListener('mouseover', this.onPointerOver, true);
++                window.addEventListener('mouseup', this.onPointerUp, true);
++
++                if (this.supportsTouchEvents)
++                {
++                    this.interactionDOMElement.addEventListener('touchstart', this.onPointerDown, true);
++                    this.interactionDOMElement.addEventListener('touchcancel', this.onPointerCancel, true);
++                    this.interactionDOMElement.addEventListener('touchend', this.onPointerUp, true);
++                    this.interactionDOMElement.addEventListener('touchmove', this.onPointerMove, true);
++                }
+             }
+         }
+ 
+@@ -547,38 +559,49 @@ export default class InteractionManager extends EventEmitter
+ 
+         core.ticker.shared.remove(this.update, this);
+ 
+-        if (window.navigator.msPointerEnabled)
++        if (isV8())
+         {
+-            this.interactionDOMElement.style['-ms-content-zooming'] = '';
+-            this.interactionDOMElement.style['-ms-touch-action'] = '';
++            this.interactionDOMElement.delListener('onMouseMove', this.onPointerMove);
++            this.interactionDOMElement.delListener('onMouseDown', this.onPointerDown);
++            this.interactionDOMElement.delListener('onMouseEnter', this.onPointerOut);
++            this.interactionDOMElement.delListener('onMouseLeave', this.onPointerOver);
++            this.interactionDOMElement.delListener('onMouseUp', this.onPointerUp);
+         }
+-        else if (this.supportsPointerEvents)
++        else
+         {
+-            this.interactionDOMElement.style['touch-action'] = '';
+-        }
++            if (window.navigator.msPointerEnabled)
++            {
++                this.interactionDOMElement.style['-ms-content-zooming'] = '';
++                this.interactionDOMElement.style['-ms-touch-action'] = '';
++            }
++            else if (this.supportsPointerEvents)
++            {
++                this.interactionDOMElement.style['touch-action'] = '';
++            }
+ 
+-        if (this.supportsPointerEvents)
+-        {
+-            window.document.removeEventListener('pointermove', this.onPointerMove, true);
+-            this.interactionDOMElement.removeEventListener('pointerdown', this.onPointerDown, true);
+-            this.interactionDOMElement.removeEventListener('pointerout', this.onPointerOut, true);
+-            this.interactionDOMElement.removeEventListener('pointerover', this.onPointerOver, true);
+-            window.removeEventListener('pointercancel', this.onPointerCancel, true);
+-            window.removeEventListener('pointerup', this.onPointerUp, true);
+-        }
++            if (this.supportsPointerEvents)
++            {
++                window.document.removeEventListener('pointermove', this.onPointerMove, true);
++                this.interactionDOMElement.removeEventListener('pointerdown', this.onPointerDown, true);
++                this.interactionDOMElement.removeEventListener('pointerout', this.onPointerOut, true);
++                this.interactionDOMElement.removeEventListener('pointerover', this.onPointerOver, true);
++                window.removeEventListener('pointercancel', this.onPointerCancel, true);
++                window.removeEventListener('pointerup', this.onPointerUp, true);
++            }
+ 
+-        window.document.removeEventListener('mousemove', this.onPointerMove, true);
+-        this.interactionDOMElement.removeEventListener('mousedown', this.onPointerDown, true);
+-        this.interactionDOMElement.removeEventListener('mouseout', this.onPointerOut, true);
+-        this.interactionDOMElement.removeEventListener('mouseover', this.onPointerOver, true);
+-        window.removeEventListener('mouseup', this.onPointerUp, true);
++            window.document.removeEventListener('mousemove', this.onPointerMove, true);
++            this.interactionDOMElement.removeEventListener('mousedown', this.onPointerDown, true);
++            this.interactionDOMElement.removeEventListener('mouseout', this.onPointerOut, true);
++            this.interactionDOMElement.removeEventListener('mouseover', this.onPointerOver, true);
++            window.removeEventListener('mouseup', this.onPointerUp, true);
+ 
+-        if (this.supportsTouchEvents)
+-        {
+-            this.interactionDOMElement.removeEventListener('touchstart', this.onPointerDown, true);
+-            this.interactionDOMElement.removeEventListener('touchcancel', this.onPointerCancel, true);
+-            this.interactionDOMElement.removeEventListener('touchend', this.onPointerUp, true);
+-            this.interactionDOMElement.removeEventListener('touchmove', this.onPointerMove, true);
++            if (this.supportsTouchEvents)
++            {
++                this.interactionDOMElement.removeEventListener('touchstart', this.onPointerDown, true);
++                this.interactionDOMElement.removeEventListener('touchcancel', this.onPointerCancel, true);
++                this.interactionDOMElement.removeEventListener('touchend', this.onPointerUp, true);
++                this.interactionDOMElement.removeEventListener('touchmove', this.onPointerMove, true);
++            }
+         }
+ 
+         this.interactionDOMElement = null;
+@@ -668,21 +691,29 @@ export default class InteractionManager extends EventEmitter
+         // only do things if there is a cursor style for it
+         if (style)
+         {
+-            switch (typeof style)
++            if (isV8())
++            {
++                // TODO cursor, see browser.js
++                // console.log('==setCursorMode=');
++            }
++            else
+             {
+-                case 'string':
+-                    // string styles are handled as cursor CSS
+-                    this.interactionDOMElement.style.cursor = style;
+-                    break;
+-                case 'function':
+-                    // functions are just called, and passed the cursor mode
+-                    style(mode);
+-                    break;
+-                case 'object':
+-                    // if it is an object, assume that it is a dictionary of CSS styles,
+-                    // apply it to the interactionDOMElement
+-                    Object.assign(this.interactionDOMElement.style, style);
+-                    break;
++                switch (typeof style)
++                {
++                    case 'string':
++                        // string styles are handled as cursor CSS
++                        this.interactionDOMElement.style.cursor = style;
++                        break;
++                    case 'function':
++                        // functions are just called, and passed the cursor mode
++                        style(mode);
++                        break;
++                    case 'object':
++                        // if it is an object, assume that it is a dictionary of CSS styles,
++                        // apply it to the interactionDOMElement
++                        Object.assign(this.interactionDOMElement.style, style);
++                        break;
++                }
+             }
+         }
+     }
+@@ -722,22 +753,32 @@ export default class InteractionManager extends EventEmitter
+      */
+     mapPositionToPoint(point, x, y)
+     {
+-        let rect;
+-
+-        // IE 11 fix
+-        if (!this.interactionDOMElement.parentElement)
++        if (isV8())
+         {
+-            rect = { x: 0, y: 0, width: 0, height: 0 };
++            const resolutionMultiplier = (1.0 / this.resolution);
++
++            point.x = x * resolutionMultiplier;
++            point.y = y * resolutionMultiplier;
+         }
+         else
+         {
+-            rect = this.interactionDOMElement.getBoundingClientRect();
+-        }
++            let rect;
++
++            // IE 11 fix
++            if (!this.interactionDOMElement.parentElement)
++            {
++                rect = { x: 0, y: 0, width: 0, height: 0 };
++            }
++            else
++            {
++                rect = this.interactionDOMElement.getBoundingClientRect();
++            }
+ 
+-        const resolutionMultiplier = navigator.isCocoonJS ? this.resolution : (1.0 / this.resolution);
++            const resolutionMultiplier = navigator.isCocoonJS ? this.resolution : (1.0 / this.resolution);
+ 
+-        point.x = ((x - rect.left) * (this.interactionDOMElement.width / rect.width)) * resolutionMultiplier;
+-        point.y = ((y - rect.top) * (this.interactionDOMElement.height / rect.height)) * resolutionMultiplier;
++            point.x = ((x - rect.left) * (this.interactionDOMElement.width / rect.width)) * resolutionMultiplier;
++            point.y = ((y - rect.top) * (this.interactionDOMElement.height / rect.height)) * resolutionMultiplier;
++        }
+     }
+ 
+     /**
+@@ -889,7 +930,7 @@ export default class InteractionManager extends EventEmitter
+ 
+         // Guaranteed that there will be at least one event in events, and all events must have the same pointer type
+ 
+-        if (this.autoPreventDefault && events[0].isNormalized)
++        if (!isV8() && this.autoPreventDefault && events[0].isNormalized)
+         {
+             originalEvent.preventDefault();
+         }
+@@ -904,7 +945,7 @@ export default class InteractionManager extends EventEmitter
+ 
+             const interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+ 
+-            interactionEvent.data.originalEvent = originalEvent;
++            interactionEvent.data.originalEvent = isV8() ? this.normalizeEventToPointerDataV8(originalEvent) : originalEvent;
+ 
+             this.processInteractive(interactionEvent, this.renderer._lastObjectRendered, this.processPointerDown, true);
+ 
+@@ -988,7 +1029,7 @@ export default class InteractionManager extends EventEmitter
+ 
+             const interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+ 
+-            interactionEvent.data.originalEvent = originalEvent;
++            interactionEvent.data.originalEvent = isV8() ? this.normalizeEventToPointerDataV8(originalEvent) : originalEvent;
+ 
+             this.processInteractive(interactionEvent, this.renderer._lastObjectRendered, func, true);
+ 
+@@ -1170,7 +1211,7 @@ export default class InteractionManager extends EventEmitter
+ 
+             const interactionEvent = this.configureInteractionEventForDOMEvent(this.eventData, event, interactionData);
+ 
+-            interactionEvent.data.originalEvent = originalEvent;
++            interactionEvent.data.originalEvent = isV8() ? this.normalizeEventToPointerDataV8(originalEvent) : originalEvent;
+ 
+             const interactive = event.pointerType === 'touch' ? this.moveWhenInside : true;
+ 
+@@ -1410,7 +1451,7 @@ export default class InteractionManager extends EventEmitter
+         // This is the way InteractionManager processed touch events before the refactoring, so I've kept
+         // it here. But it doesn't make that much sense to me, since mapPositionToPoint already factors
+         // in this.resolution, so this just divides by this.resolution twice for touch events...
+-        if (navigator.isCocoonJS && event.pointerType === 'touch')
++        if (!isV8() && navigator.isCocoonJS && event.pointerType === 'touch')
+         {
+             interactionData.global.x = interactionData.global.x / this.resolution;
+             interactionData.global.y = interactionData.global.y / this.resolution;
+@@ -1430,6 +1471,34 @@ export default class InteractionManager extends EventEmitter
+     }
+ 
+     /**
++     * Normalize event to a normal format.
++     * Only for V8.
++     *
++     * @param {PointerEvent} event - The DOM event of a pointer button being moved into the renderer view
++     * @returns {Object} - Normalized data.
++     */
++    normalizeEventToPointerDataV8(event)
++    {
++        return {
++            clientX: event.x,
++            clientY: event.y,
++            x: event.x,
++            y: event.y,
++            isPrimary: true,
++            width: 1,
++            height: 1,
++            tiltX: 0,
++            tiltY: 0,
++            pointerType: 'mouse',
++            type: 'mouse',
++            pointerId: MOUSE_POINTER_ID,
++            pressure: 0.5,
++            rotation: 0,
++            isNormalized: true,
++        };
++    }
++
++    /**
+      * Ensures that the original event object contains all data that a regular pointer event would have
+      *
+      * @private
+@@ -1441,7 +1510,15 @@ export default class InteractionManager extends EventEmitter
+     {
+         const normalizedEvents = [];
+ 
+-        if (this.supportsTouchEvents && event instanceof TouchEvent)
++        if (isV8())
++        {
++            const normalizedEvent = this.normalizeEventToPointerDataV8(event);
++
++            // mark the touch as normalized, just so that we know we did it
++            normalizedEvent.isNormalized = true;
++            normalizedEvents.push(normalizedEvent);
++        }
++        else if (this.supportsTouchEvents && event instanceof TouchEvent)
+         {
+             for (let i = 0, li = event.changedTouches.length; i < li; i++)
+             {
+@@ -1535,3 +1612,4 @@ export default class InteractionManager extends EventEmitter
+ 
+ core.WebGLRenderer.registerPlugin('interaction', InteractionManager);
+ core.CanvasRenderer.registerPlugin('interaction', InteractionManager);
++core.PXSceneRenderer.registerPlugin('interaction', InteractionManager);
+diff --git a/src/loaders/index.js b/src/loaders/index.js
+index 51897931..902ebab2 100644
+--- a/src/loaders/index.js
++++ b/src/loaders/index.js
+@@ -1,15 +1,37 @@
+ /**
+- * @namespace PIXI.loaders
+- */
+-export { default as Loader } from './loader';
+-export { default as bitmapFontParser, parse as parseBitmapFontData } from './bitmapFontParser';
+-export { default as spritesheetParser } from './spritesheetParser';
+-export { default as textureParser } from './textureParser';
+-
+-/**
+  * Reference to **resource-loader**'s Resource class.
+  * See https://github.com/englercj/resource-loader
+  * @class Resource
+  * @memberof PIXI.loaders
+  */
+-export { Resource } from 'resource-loader';
++import { isV8 } from '../core/utils';
++
++/**
++ * @namespace PIXI.loaders
++ */
++if (isV8())
++{
++    const Loader = require('./LoaderV8').default; // eslint-disable-line global-require
++
++    module.exports = {
++        Loader,
++    };
++}
++else
++{
++    const Resource = require('resource-loader'); // eslint-disable-line global-require
++    const Loader = require('./loader').default; // eslint-disable-line global-require
++    const bitmapFontParser = require('./bitmapFontParser').default; // eslint-disable-line global-require
++    const parseBitmapFontData = require('./bitmapFontParser').parse; // eslint-disable-line global-require
++    const spritesheetParser = require('./spritesheetParser'); // eslint-disable-line global-require
++    const textureParser = require('./textureParser'); // eslint-disable-line global-require
++
++    module.exports = {
++        Resource,
++        Loader,
++        bitmapFontParser,
++        parseBitmapFontData,
++        spritesheetParser,
++        textureParser,
++    };
++}
+diff --git a/src/loaders/loaderV8.js b/src/loaders/loaderV8.js
+new file mode 100644
+index 00000000..8ecf383f
+--- /dev/null
++++ b/src/loaders/loaderV8.js
+@@ -0,0 +1,144 @@
++import { Sprite } from '../core';
++
++/**
++ *
++ * The new loader for loading spriteFrames in V8
++ *
++ * Only support adding sprite frames
++ *
++ * @class
++ * @memberof PIXI.loaders
++ */
++export default class LoaderV8
++{
++    /**
++     * Constructor
++     */
++    constructor()
++    {
++        /**
++         * Cached sprite frame resources
++         *
++         * Key: path
++         * Value: {
++         *    texture,
++         *    meta,
++         * }
++         * @type {{}}
++         */
++        this.spriteFrameResources = {};
++        this.fs = null;
++        this.http = null;
++    }
++
++    /**
++     * Add sprite frames.
++     *
++     * @param {String} jsonPath - json path of the sprite frames
++     * @param {Object} fs - Nodejs fs module
++     * @param {Object} http - Nodejs http module
++     * @param {Object} url - Nodejs url module
++     * @returns {LoaderV8} Current object.
++     */
++    add(jsonPath, fs, http, url)
++    {
++        this.jsonPath = jsonPath;
++        this.fs = fs;
++        this.http = http;
++        this.url = url;
++
++        return this;
++    }
++
++    /**
++     * Load resource
++     *
++     * @param {Function} func - callback function after loading complete.
++     */
++    load(func)
++    {
++        if (!func)
++        {
++            return;
++        }
++
++        if (this.spriteFrameResources[this.jsonPath])
++        {
++            func(null, this.spriteFrameResources[this.jsonPath]);
++        }
++        else
++        {
++            const url = this.url;
++            const http = this.http;
++            const fs = this.fs;
++            const parsed = url.parse(this.jsonPath);
++
++            if (parsed.protocol)
++            {
++                http.get(this.jsonPath, (res) =>
++                {
++                    const statusCode = res.statusCode;
++                    let err;
++
++                    if (statusCode !== 200)
++                    {
++                        err = new Error(`Request Failed.\nStatus Code: ${statusCode}`);
++                    }
++                    if (err)
++                    {
++                        func(err);
++                        res.resume();
++
++                        return;
++                    }
++
++                    const body = [];
++
++                    res.on('data', (data) =>
++                    {
++                        body.push(data);
++                    });
++
++                    res.on('end', () =>
++                    {
++                        const data = body.join();
++                        const jsonObj = JSON.parse(data);
++
++                        const filePathBase = this.jsonPath.substring(0, this.jsonPath.lastIndexOf('/') + 1);
++                        const imgName = jsonObj.meta.image;
++                        const sprite = Sprite.fromImage(`${filePathBase}${imgName}`);
++
++                        this.spriteFrameResources[this.jsonPath] = {
++                            texture: sprite.texture,
++                            meta: jsonObj,
++                        };
++                        func(null, this.spriteFrameResources[this.jsonPath]);
++                    });
++                });
++            }
++            else
++            {
++                fs.readFile(this.jsonPath, (err, data) =>
++                {
++                    if (err)
++                    {
++                        func(err);
++
++                        return;
++                    }
++                    const jsonObj = JSON.parse(data);
++
++                    const filePathBase = this.jsonPath.substring(0, this.jsonPath.lastIndexOf('/') + 1);
++                    const imgName = jsonObj.meta.image;
++                    const sprite = Sprite.fromImage(`${filePathBase}${imgName}`);
++
++                    this.spriteFrameResources[this.jsonPath] = {
++                        texture: sprite.texture,
++                        meta: jsonObj,
++                    };
++                    func(null, this.spriteFrameResources[this.jsonPath]);
++                });
++            }
++        }
++    }
++}
+diff --git a/src/polyfill/index.js b/src/polyfill/index.js
+index d963deec..f54d5709 100644
+--- a/src/polyfill/index.js
++++ b/src/polyfill/index.js
+@@ -1,23 +1,29 @@
+ import './Object.assign';
+ import './requestAnimationFrame';
+ import './Math.sign';
++import {
++    isV8,
++} from '../core/utils';
+ 
+-if (!window.ArrayBuffer)
++if (!isV8())
+ {
+-    window.ArrayBuffer = Array;
+-}
++    if (!window.ArrayBuffer)
++    {
++        window.ArrayBuffer = Array;
++    }
+ 
+-if (!window.Float32Array)
+-{
+-    window.Float32Array = Array;
+-}
++    if (!window.Float32Array)
++    {
++        window.Float32Array = Array;
++    }
+ 
+-if (!window.Uint32Array)
+-{
+-    window.Uint32Array = Array;
+-}
++    if (!window.Uint32Array)
++    {
++        window.Uint32Array = Array;
++    }
+ 
+-if (!window.Uint16Array)
+-{
+-    window.Uint16Array = Array;
++    if (!window.Uint16Array)
++    {
++        window.Uint16Array = Array;
++    }
+ }

@@ -1,0 +1,23 @@
+{
+  "name": "Hercules-pixi-server",
+  "version": "1.0.0",
+  "description": "Hercules pixi server",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server"
+  },
+  "dependencies": {
+    "express": "~4.13.4",
+    "winston": "~2.2.0"
+  },
+  "devDependencies": {
+    "eslint": "^3.5.0",
+    "eslint-config-airbnb-base": "^7.1.0",
+    "eslint-plugin-import": "^1.15.0"
+  },
+  "engines": {
+    "node": "6.6.0",
+    "npm": "3.10.0"
+  }
+}

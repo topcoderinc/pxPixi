@@ -46,7 +46,7 @@ index f9235e4c..4d29a35d 100644
  
  /**
 diff --git a/src/core/display/Container.js b/src/core/display/Container.js
-index ed8cd5f3..74261066 100644
+index ed8cd5f3..b25ac64e 100644
 --- a/src/core/display/Container.js
 +++ b/src/core/display/Container.js
 @@ -317,10 +317,10 @@ export default class Container extends DisplayObject
@@ -64,7 +64,7 @@ index ed8cd5f3..74261066 100644
  
          for (let i = 0, j = this.children.length; i < j; ++i)
          {
-@@ -500,6 +500,38 @@ export default class Container extends DisplayObject
+@@ -500,6 +500,122 @@ export default class Container extends DisplayObject
      }
  
      /**
@@ -97,13 +97,97 @@ index ed8cd5f3..74261066 100644
 +        renderedObject.w = this.width;
 +        renderedObject.h = this.height;
 +        renderedObject.r = this.rotation * (180 / Math.PI);
++        renderedObject.sx = this.scale.x;
++        renderedObject.sy = this.scale.y;
++
++        // mask
++        if (this.mask)
++        {
++            const maskRenderedObject = this.mask.renderedObject;
++
++            if (maskRenderedObject)
++            {
++                this.__backupMaskWidth = maskRenderedObject.w;
++                this.__backupMaskHeight = maskRenderedObject.h;
++                this.__backupMaskParent = maskRenderedObject.parent;
++                this.__backupMaskRenderedObject = maskRenderedObject;
++
++                if (this.mask.renderedObjects)
++                {
++                    for (let i = 0, j = this.mask.renderedObjects.length; i < j; ++i)
++                    {
++                        const maskRenderedObject = this.mask.renderedObjects[i];
++
++                        this.mask.renderedObject.w = maskRenderedObject.w;
++                        this.mask.renderedObject.h = maskRenderedObject.h;
++
++                        innerRenderMask.call(this, this.mask.renderedObject);
++                    }
++                }
++                else
++                {
++                    const maskRenderedObject = this.mask.renderedObject;
++
++                    innerRenderMask.call(this, maskRenderedObject);
++                }
++            }
++        }
++        else
++        {
++            const renderedObjectMaskContainer = this.renderedObjectMaskContainer;
++
++            if (renderedObjectMaskContainer)
++            {
++                const maskRenderedObject = this.__backupMaskRenderedObject;
++
++                renderedObject.parent = renderedObjectMaskContainer.parent;
++
++                maskRenderedObject.parent = this.__backupMaskParent;
++
++                renderedObjectMaskContainer.remove();
++
++                maskRenderedObject.w = this.__backupMaskWidth;
++                maskRenderedObject.h = this.__backupMaskHeight;
++                maskRenderedObject.mask = false;
++
++                this.__backupMaskWidth = undefined;
++                this.__backupMaskHeight = undefined;
++                this.__backupMaskParent = undefined;
++                this.__backupMaskRenderedObject = undefined;
++                this.renderedObjectMaskContainer = null;
++            }
++        }
++
++        function innerRenderMask(maskRenderedObject)
++        {
++            if (!this.renderedObjectMaskContainer)
++            {
++                this.renderedObjectMaskContainer = renderer.view.create({
++                    t: 'rect',
++                    parent: renderedObject.parent,
++                    fillColor: 0,
++                });
++            }
++
++            maskRenderedObject.parent = this.renderedObjectMaskContainer;
++            renderedObject.parent = this.renderedObjectMaskContainer;
++
++            const renderedObjectMaskContainer = this.renderedObjectMaskContainer;
++
++            renderedObjectMaskContainer.x = 0;
++            renderedObjectMaskContainer.y = 0;
++            renderedObjectMaskContainer.w = renderer.width;
++            renderedObjectMaskContainer.h = renderer.height;
++
++            maskRenderedObject.mask = true;
++        }
 +    }
 +
 +    /**
       * Renders the object using the Canvas renderer
       *
       * @param {PIXI.CanvasRenderer} renderer - The renderer
-@@ -530,6 +562,26 @@ export default class Container extends DisplayObject
+@@ -530,6 +646,26 @@ export default class Container extends DisplayObject
      }
  
      /**
@@ -130,7 +214,7 @@ index ed8cd5f3..74261066 100644
       * Removes all internal references and listeners as well as removes children from the display list.
       * Do not use a Container after calling `destroy`.
       *
-@@ -546,6 +598,23 @@ export default class Container extends DisplayObject
+@@ -546,6 +682,23 @@ export default class Container extends DisplayObject
      {
          super.destroy();
  
@@ -154,7 +238,7 @@ index ed8cd5f3..74261066 100644
          const destroyChildren = typeof options === 'boolean' ? options : options && options.children;
  
          const oldChildren = this.removeChildren(0, this.children.length);
-@@ -566,7 +635,14 @@ export default class Container extends DisplayObject
+@@ -566,7 +719,14 @@ export default class Container extends DisplayObject
       */
      get width()
      {
@@ -170,7 +254,7 @@ index ed8cd5f3..74261066 100644
      }
  
      set width(value) // eslint-disable-line require-jsdoc
-@@ -592,7 +668,14 @@ export default class Container extends DisplayObject
+@@ -592,7 +752,14 @@ export default class Container extends DisplayObject
       */
      get height()
      {
@@ -187,10 +271,18 @@ index ed8cd5f3..74261066 100644
  
      set height(value) // eslint-disable-line require-jsdoc
 diff --git a/src/core/display/DisplayObject.js b/src/core/display/DisplayObject.js
-index 4e6c77d0..d49d1517 100644
+index 4e6c77d0..41f69acf 100644
 --- a/src/core/display/DisplayObject.js
 +++ b/src/core/display/DisplayObject.js
-@@ -331,6 +331,16 @@ export default class DisplayObject extends EventEmitter
+@@ -5,6 +5,7 @@ import TransformStatic from './TransformStatic';
+ import Transform from './Transform';
+ import Bounds from './Bounds';
+ import { Rectangle } from '../math';
++import { isV8 } from '../utils';
+ // _tempDisplayObjectParent = new DisplayObject();
+ 
+ /**
+@@ -331,6 +332,16 @@ export default class DisplayObject extends EventEmitter
      }
  
      /**
@@ -207,6 +299,36 @@ index 4e6c77d0..d49d1517 100644
       * Set the parent Container of this DisplayObject
       *
       * @param {PIXI.Container} container - The Container to add this DisplayObject to
+@@ -578,16 +589,23 @@ export default class DisplayObject extends EventEmitter
+ 
+     set mask(value) // eslint-disable-line require-jsdoc
+     {
+-        if (this._mask)
++        if (isV8())
+         {
+-            this._mask.renderable = true;
++            this._mask = value;
+         }
++        else
++        {
++            if (this._mask)
++            {
++                this._mask.renderable = true;
++            }
+ 
+-        this._mask = value;
++            this._mask = value;
+ 
+-        if (this._mask)
+-        {
+-            this._mask.renderable = false;
++            if (this._mask)
++            {
++                this._mask.renderable = false;
++            }
+         }
+     }
+ 
 diff --git a/src/core/graphics/GraphicsV8.js b/src/core/graphics/GraphicsV8.js
 new file mode 100644
 index 00000000..b409c298
@@ -1255,10 +1377,10 @@ index 00000000..b409c298
 +GraphicsV8._SPRITE_TEXTURE = null;
 diff --git a/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
 new file mode 100644
-index 00000000..83735cb2
+index 00000000..74832d00
 --- /dev/null
 +++ b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
-@@ -0,0 +1,398 @@
+@@ -0,0 +1,399 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import { SHAPES } from '../../const';
 +import { hex2rgb, rgb2rgba, rgba2hex } from '../../utils';
@@ -1542,6 +1664,7 @@ index 00000000..83735cb2
 +        const circle = this.renderer.view.create({
 +            t: 'rect',
 +            parent: parentRenderedObject,
++            clip: true,
 +        });
 +
 +        circle.w = spriteWidth * ratio;
@@ -1693,10 +1816,10 @@ index f03fe153..7b7f772b 100644
  export { default as BaseTexture } from './textures/BaseTexture';
 diff --git a/src/core/renderers/pxscene/PXSceneRenderer.js b/src/core/renderers/pxscene/PXSceneRenderer.js
 new file mode 100644
-index 00000000..b4c911f8
+index 00000000..1e384eaa
 --- /dev/null
 +++ b/src/core/renderers/pxscene/PXSceneRenderer.js
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,265 @@
 +import SystemRenderer from '../SystemRenderer';
 +import { pluginTarget, hex2rgb, rgb2rgba, rgba2hex } from '../../utils';
 +import { RENDERER_TYPE, SCALE_MODES } from '../../const';
@@ -1767,8 +1890,9 @@ index 00000000..b4c911f8
 +     * @param {boolean} [clear=false] - Whether to clear the canvas before drawing
 +     * @param {PIXI.Transform} [transform] - A transformation to be applied
 +     * @param {boolean} [skipUpdateTransform=false] - Whether to skip the update transform
++     * @param {boolean} [forceRender=false] - forceRender a renderTexture, no matter the display object is changed or not.
 +     */
-+    render(displayObject, renderTexture, clear, transform, skipUpdateTransform)
++    render(displayObject, renderTexture, clear, transform, skipUpdateTransform, forceRender = false)
 +    {
 +        if (!this.view)
 +        {
@@ -1784,8 +1908,6 @@ index 00000000..b4c911f8
 +
 +        if (renderTexture)
 +        {
-+            // renderTexture = renderTexture.baseTexture || renderTexture;
-+
 +            if (!renderTexture._pxsceneRenderTarget)
 +            {
 +                renderTexture._pxsceneRenderTarget = new PXSceneRenderTarget(
@@ -1797,11 +1919,17 @@ index 00000000..b4c911f8
 +                renderTexture.valid = true;
 +            }
 +
-+            if (displayObject !== renderTexture._pxsceneRenderTarget.prevRenderedObject)
++            // User specified clear
++            if (clear !== undefined)
++            {
++                forceRender = true;
++            }
++
++            if (forceRender || displayObject !== renderTexture._pxsceneRenderTarget.prevRenderedObject)
 +            {
 +                const child = renderTexture._pxsceneRenderTarget.children[0];
 +
-+                if (child)
++                if (clear && child)
 +                {
 +                    renderTexture._pxsceneRenderTarget.clear();
 +                }
@@ -1959,13 +2087,12 @@ index 00000000..b4c911f8
 +pluginTarget.mixin(PXSceneRenderer);
 diff --git a/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js b/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
 new file mode 100644
-index 00000000..96423358
+index 00000000..6ccc119f
 --- /dev/null
 +++ b/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,82 @@
 +import settings from '../../../settings';
 +import Container from '../../../display/Container';
-+// import { Point } from '../../../math';
 +
 +/**
 + * Creates a PXScene Render target of the given size.
@@ -2002,6 +2129,12 @@ index 00000000..96423358
 +     */
 +    clear()
 +    {
++        if (this.renderedObject)
++        {
++            this.renderedObject.removeAll();
++            this.renderedObject.remove();
++            this.renderedObject = null;
++        }
 +        this.destroyAllChildren(true);
 +    }
 +
@@ -2041,7 +2174,7 @@ index 00000000..96423358
 +    }
 +}
 diff --git a/src/core/sprites/Sprite.js b/src/core/sprites/Sprite.js
-index 28b0b18e..aa622348 100644
+index 28b0b18e..533f1b1f 100644
 --- a/src/core/sprites/Sprite.js
 +++ b/src/core/sprites/Sprite.js
 @@ -1,5 +1,5 @@
@@ -2099,7 +2232,7 @@ index 28b0b18e..aa622348 100644
       * Updates the bounds of the sprite.
       *
       * @private
-@@ -385,15 +403,26 @@ export default class Sprite extends Container
+@@ -385,15 +403,33 @@ export default class Sprite extends Container
      {
          this.worldTransform.applyInverse(point, tempPoint);
  
@@ -2110,8 +2243,15 @@ index 28b0b18e..aa622348 100644
 +
 +        if (isV8())
 +        {
-+            width = this.renderedObject.resource.w;
-+            height = this.renderedObject.resource.h;
++            if (this.renderedObjectSprite)
++            {
++                width = this.renderedObjectSprite.resource.w;
++                height = this.renderedObjectSprite.resource.h;
++            }
++            else
++            {
++                return false;
++            }
 +        }
 +        else
 +        {
@@ -2129,7 +2269,7 @@ index 28b0b18e..aa622348 100644
              if (tempPoint.y > y1 && tempPoint.y < y1 + height)
              {
                  return true;
-@@ -484,21 +513,109 @@ export default class Sprite extends Container
+@@ -484,21 +520,109 @@ export default class Sprite extends Container
      }
  
      /**
@@ -2139,12 +2279,12 @@ index 28b0b18e..aa622348 100644
 +     */
 +    updateAttr()
 +    {
-+        const renderedObject = this.renderedObject;
++        const renderedObjectSprite = this.renderedObjectSprite;
 +
-+        if (renderedObject)
++        if (renderedObjectSprite)
 +        {
-+            const spriteWidth = renderedObject.resource.w;
-+            const spriteHeight = renderedObject.resource.h;
++            const spriteWidth = renderedObjectSprite.resource.w;
++            const spriteHeight = renderedObjectSprite.resource.h;
 +
 +            if (!spriteWidth || !spriteHeight)
 +            {
@@ -2242,7 +2382,7 @@ index 28b0b18e..aa622348 100644
      }
  
      /**
-@@ -508,15 +625,73 @@ export default class Sprite extends Container
+@@ -508,15 +632,73 @@ export default class Sprite extends Container
       */
      get height()
      {
@@ -2319,7 +2459,7 @@ index 28b0b18e..aa622348 100644
      }
  
      /**
-@@ -577,8 +752,9 @@ export default class Sprite extends Container
+@@ -577,8 +759,9 @@ export default class Sprite extends Container
  
          this._textureID = -1;
          this._textureTrimmedID = -1;
@@ -2332,13 +2472,15 @@ index 28b0b18e..aa622348 100644
              if (value.baseTexture.hasLoaded)
 diff --git a/src/core/sprites/pxscene/PXSceneSpriteRenderer.js b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
 new file mode 100644
-index 00000000..bf0e36c1
+index 00000000..3a10c4c9
 --- /dev/null
 +++ b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,458 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import RenderTexture from '../../textures/RenderTexture';
 +import { Point } from '../../math';
++import { hexrgb2rgba } from '../../utils';
++import { BLEND_MODES } from '../../const';
 +
 +/**
 + * Renderer dedicated to drawing and batching sprites for PXScene.
@@ -2373,14 +2515,19 @@ index 00000000..bf0e36c1
 +
 +        const parentRenderedObject = (sprite.parent && sprite.parent.renderedObject) || this.renderer.context;
 +
++        const defaultTint = 0xFFFFFF;
++
 +        if (texture instanceof RenderTexture) // render texture?
 +        {
 +            if (texture._pxsceneRenderTarget)
 +            {
 +                const pxsceneRendererTarget = texture._pxsceneRenderTarget;
 +
-+                pxsceneRendererTarget.x = sprite.x;
-+                pxsceneRendererTarget.y = sprite.y;
++                const cx = pxsceneRendererTarget.canvasWidth * sprite.anchor.x;
++                const cy = pxsceneRendererTarget.canvasHeight * sprite.anchor.y;
++
++                pxsceneRendererTarget.x = sprite.x - cx;
++                pxsceneRendererTarget.y = sprite.y - cy;
 +                pxsceneRendererTarget.parent = sprite.parent;
 +                pxsceneRendererTarget.scale = sprite.scale;
 +                pxsceneRendererTarget.renderPXScene(this.renderer);
@@ -2411,63 +2558,19 @@ index 00000000..bf0e36c1
 +            // Calculate all attributes
 +            if (sprite.renderedObject)
 +            {
-+                const renderedObject = sprite.renderedObject;
-+
-+                spriteWidth = maskRect.w;
-+                spriteHeight = maskRect.h;
-+
-+                const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
-+
-+                renderedObject.x = attr.x;
-+                renderedObject.y = attr.y;
-+                renderedObject.cx = attr.cx;
-+                renderedObject.cy = attr.cy;
-+                renderedObject.a = attr.a;
-+                renderedObject.r = attr.r;
-+                renderedObject.sx = attr.sx;
-+                renderedObject.sy = attr.sy;
-+                renderedObject.w = spriteWidth;
-+                renderedObject.h = spriteHeight;
-+
-+                const renderedObjectMask = sprite.renderedObjectMask;
-+
-+                renderedObjectMask.w = spriteWidth;
-+                renderedObjectMask.h = spriteHeight;
-+
-+                const renderedObjectSprite = sprite.renderedObjectSprite;
-+
-+                renderedObjectSprite.x = -maskRect.x;
-+                renderedObjectSprite.y = -maskRect.y;
++                innerRenderSpriteFrame.call(this, maskRect);
 +            }
 +            else
 +            {
-+                const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
-+
 +                sprite.renderedObject = this.renderer.view.create({
 +                    t: 'rect',
 +                    parent: parentRenderedObject,
-+                    x: attr.x,
-+                    y: attr.y,
-+                    cx: attr.cx,
-+                    cy: attr.cy,
-+                    a: attr.a,
-+                    r: attr.r,
-+                    sx: attr.sx,
-+                    sy: attr.sy,
-+                    w: maskRect.w,
-+                    h: maskRect.h,
-+                    fillColor: 0x0,
++                    fillColor: 0,
 +                });
 +
 +                sprite.renderedObjectMask = this.renderer.view.create({
 +                    t: 'rect',
 +                    parent: sprite.renderedObject,
-+                    x: 0,
-+                    y: 0,
-+                    cx: attr.cx,
-+                    cy: attr.cy,
-+                    w: maskRect.w,
-+                    h: maskRect.h,
 +                    fillColor: 0xFFFF00FF,
 +                    mask: true,
 +                    draw: false,
@@ -2476,12 +2579,28 @@ index 00000000..bf0e36c1
 +                sprite.renderedObjectSprite = this.renderer.view.create({
 +                    t: 'image',
 +                    parent: sprite.renderedObject,
-+                    x: -maskRect.x,
-+                    y: -maskRect.y,
-+                    cx: attr.cx,
-+                    cy: attr.cy,
 +                    url: texture.baseTexture.source.src,
 +                });
++
++                if (sprite.tint !== defaultTint)
++                {
++                    sprite.renderedObjectSpriteContainer = this.renderer.view.create({
++                        t: 'rect',
++                        parent: sprite.renderedObject,
++                        fillColor: 0,
++                    });
++
++                    sprite.renderedObjectSprite.parent = sprite.renderedObjectSpriteContainer;
++                    sprite.renderedObjectSprite.mask = true;
++
++                    sprite.renderedObjectTint = this.renderer.view.create({
++                        t: 'rect',
++                        parent: sprite.renderedObjectSpriteContainer,
++                        fillColor: hexrgb2rgba(sprite.tint),
++                    });
++                }
++
++                innerRenderSpriteFrame.call(this, maskRect);
 +            }
 +        }
 +        else if (!sprite.textureDirty && sprite.renderedObject) // noFrame
@@ -2492,14 +2611,46 @@ index 00000000..bf0e36c1
 +        {
 +            if (sprite.renderedObject)
 +            {
++                sprite.renderedObject.removeAll();
 +                sprite.renderedObject.remove();
++                sprite.renderedObject = null;
 +            }
 +
 +            sprite.renderedObject = this.renderer.view.create({
-+                t: 'image',
++                t: 'rect',
 +                parent: parentRenderedObject,
-+                url: texture.baseTexture.source.src,
++                w: spriteWidth,
++                h: spriteHeight,
++                fillColor: 0x0,
 +            });
++
++            if (PXSceneSpriteRenderer.resourcesMap[texture.baseTexture.source.src])
++            {
++                sprite.renderedObjectSprite = this.renderer.view.create({
++                    t: 'image',
++                    parent: sprite.renderedObject,
++                    resource: PXSceneSpriteRenderer.resourcesMap[texture.baseTexture.source.src],
++                    mask: sprite.tint !== defaultTint,
++                });
++            }
++            else
++            {
++                sprite.renderedObjectSprite = this.renderer.view.create({
++                    t: 'image',
++                    parent: sprite.renderedObject,
++                    url: texture.baseTexture.source.src,
++                    mask: sprite.tint !== defaultTint,
++                });
++            }
++
++            if (sprite.tint !== defaultTint)
++            {
++                sprite.renderedObjectTint = this.renderer.view.create({
++                    t: 'rect',
++                    parent: sprite.renderedObject,
++                    fillColor: hexrgb2rgba(sprite.tint),
++                });
++            }
 +
 +            innerRenderSprite.call(this);
 +        }
@@ -2509,9 +2660,16 @@ index 00000000..bf0e36c1
 +            sprite.updateAttr();
 +
 +            const renderedObject = sprite.renderedObject;
++            const renderedObjectSprite = sprite.renderedObjectSprite;
++            const renderedObjectTint = sprite.renderedObjectTint;
 +
-+            spriteWidth = renderedObject.resource.w;
-+            spriteHeight = renderedObject.resource.h;
++            spriteWidth = renderedObjectSprite.resource.w;
++            spriteHeight = renderedObjectSprite.resource.h;
++
++            if (spriteWidth && spriteHeight)
++            {
++                PXSceneSpriteRenderer.resourcesMap[texture.baseTexture.source.src] = renderedObjectSprite.resource;
++            }
 +
 +            const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
 +
@@ -2523,7 +2681,202 @@ index 00000000..bf0e36c1
 +            renderedObject.r = attr.r;
 +            renderedObject.sx = attr.sx;
 +            renderedObject.sy = attr.sy;
++            renderedObject.w = spriteWidth;
++            renderedObject.h = spriteHeight;
++
++            if (sprite.tint !== defaultTint)
++            {
++                renderedObjectTint.w = spriteWidth;
++                renderedObjectTint.h = spriteHeight;
++                renderedObjectSprite.a = attr.a;
++            }
++
++            // alpha mask
++            if (sprite.mask)
++            {
++                const spriteMaskRenderedObject = sprite.mask.renderedObject;
++
++                if (spriteMaskRenderedObject)
++                {
++                    sprite.__backupMaskParent = spriteMaskRenderedObject.parent;
++                    sprite.__backupMaskAlpha = spriteMaskRenderedObject.a;
++                    sprite.__backupAlpha = renderedObject.a;
++
++                    if (!sprite.renderedObjectMaskContainer)
++                    {
++                        sprite.renderedObjectMaskContainer = this.renderer.view.create({
++                            t: 'rect',
++                            parent: renderedObject.parent,
++                            fillColor: 0,
++                        });
++
++                        renderedObject.parent = sprite.renderedObjectMaskContainer;
++                        spriteMaskRenderedObject.parent = sprite.renderedObjectMaskContainer;
++                    }
++
++                    const renderedObjectMaskContainer = sprite.renderedObjectMaskContainer;
++
++                    renderedObjectMaskContainer.x = 0;
++                    renderedObjectMaskContainer.y = 0;
++                    renderedObjectMaskContainer.cx = attr.cx;
++                    renderedObjectMaskContainer.cy = attr.cy;
++                    renderedObjectMaskContainer.w = this.renderer.width;
++                    renderedObjectMaskContainer.h = this.renderer.height;
++
++                    spriteMaskRenderedObject.mask = true;
++                    spriteMaskRenderedObject.a = 0.5;
++                    renderedObject.a = 1;
++                }
++            }
++            else
++            {
++                const renderedObjectMaskContainer = sprite.renderedObjectMaskContainer;
++
++                if (renderedObjectMaskContainer)
++                {
++                    const spriteMaskRenderedObject = sprite.mask.renderedObject;
++
++                    renderedObject.parent = renderedObjectMaskContainer.parent;
++                    renderedObject.a = sprite.__backupAlpha;
++
++                    spriteMaskRenderedObject.parent = sprite.__backupMaskParent;
++                    spriteMaskRenderedObject.a = sprite.__backupMaskAlpha;
++
++                    renderedObjectMaskContainer.remove();
++
++                    sprite.__backupAlpha = undefined;
++                    sprite.__backupMaskParent = undefined;
++                    sprite.__backupMaskAlpha = undefined;
++                }
++            }
++
++            // (only support BLEND_MODES.ADD)
++            // A trick way, just set the alpha value.
++            if (sprite.blendMode === BLEND_MODES.ADD)
++            {
++                renderedObject.a = 0.5 * attr.a;
++                if (sprite.tint !== defaultTint)
++                {
++                    renderedObjectSprite.a = 0.5 * attr.a;
++                }
++            }
 +        }
++
++        function innerRenderSpriteFrame(maskRect)
++        {
++            sprite.updateAttr();
++
++            const renderedObject = sprite.renderedObject;
++            const renderedObjectMask = sprite.renderedObjectMask;
++            const renderedObjectSprite = sprite.renderedObjectSprite;
++            const renderedObjectSpriteContainer = sprite.renderedObjectSpriteContainer;
++            const renderedObjectTint = sprite.renderedObjectTint;
++
++            spriteWidth = maskRect.w;
++            spriteHeight = maskRect.h;
++
++            const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
++
++            renderedObject.x = attr.x;
++            renderedObject.y = attr.y;
++            renderedObject.cx = attr.cx;
++            renderedObject.cy = attr.cy;
++            renderedObject.a = attr.a;
++            renderedObject.r = attr.r;
++            renderedObject.sx = attr.sx;
++            renderedObject.sy = attr.sy;
++            renderedObject.w = spriteWidth;
++            renderedObject.h = spriteHeight;
++
++            renderedObjectMask.x = 0;
++            renderedObjectMask.y = 0;
++            renderedObjectMask.cx = attr.cx;
++            renderedObjectMask.cy = attr.cy;
++            renderedObjectMask.w = spriteWidth;
++            renderedObjectMask.h = spriteHeight;
++
++            renderedObjectSprite.x = -maskRect.x;
++            renderedObjectSprite.y = -maskRect.y;
++            renderedObjectSprite.cx = attr.cx;
++            renderedObjectSprite.cy = attr.cy;
++
++            if (texture.rotate)
++            {
++                const rotateParam = this._getRotationParamByRotate(texture.rotate);
++
++                if (rotateParam)
++                {
++                    renderedObject.cx = spriteWidth * 0.5;
++                    renderedObject.cy = spriteHeight * 0.5;
++                    renderedObject.x = attr.x - (attr.sx * renderedObject.cx);
++                    renderedObject.y = attr.y - (attr.sy * renderedObject.cy);
++
++                    renderedObject.sx = attr.sx * rotateParam.sx;
++                    renderedObject.sy = attr.sy * rotateParam.sy;
++                    renderedObject.r = attr.r + rotateParam.r;
++                }
++            }
++
++            if (sprite.tint !== defaultTint)
++            {
++                renderedObjectSpriteContainer.x = 0;
++                renderedObjectSpriteContainer.y = 0;
++                renderedObjectSpriteContainer.cx = attr.cx;
++                renderedObjectSpriteContainer.cy = attr.cy;
++                renderedObjectSpriteContainer.w = spriteWidth;
++                renderedObjectSpriteContainer.h = spriteHeight;
++
++                renderedObjectTint.x = -maskRect.x;
++                renderedObjectTint.y = -maskRect.y;
++                renderedObjectTint.cx = attr.cx;
++                renderedObjectTint.cy = attr.cy;
++                renderedObjectTint.w = spriteWidth;
++                renderedObjectTint.h = spriteHeight;
++
++                renderedObjectSprite.a = attr.a;
++            }
++        }
++    }
++
++    /**
++     * Calculate rotation param by rotate (from texture packer)
++     *
++     * @param {Number} rotation - Rotation (from texture packer)
++     * @returns {Object|null} Rotation param
++     * @private
++     */
++    _getRotationParamByRotate(rotation)
++    {
++        if (rotation % 2 !== 0)
++        {
++            // Not supported yet, don't rotate
++            return null;
++        }
++
++        let flip = false;
++
++        if (rotation >= 8)
++        {
++            rotation -= 8;
++            flip = true;
++        }
++
++        if (rotation === 2)
++        {
++            rotation = 6;
++        }
++        else if (rotation === 6)
++        {
++            rotation = 2;
++        }
++
++        const degree = rotation * 45;
++
++        return {
++            r: degree,
++            sx: flip ? -1 : 1,
++            sy: 1,
++        };
 +    }
 +
 +    /**
@@ -2568,6 +2921,17 @@ index 00000000..bf0e36c1
 +        this.renderer = null;
 +    }
 +}
++
++// Key: rotation method of texture packer
++// Value: rotation degree
++PXSceneSpriteRenderer.rotationDegreeMap = {
++    0: 0,
++    2: 270,
++    4: 180,
++    6: 90,
++};
++
++PXSceneSpriteRenderer.resourcesMap = {};
 +
 +PXSceneRenderer.registerPlugin('sprite', PXSceneSpriteRenderer);
 diff --git a/src/core/text/Text.js b/src/core/text/Text.js
@@ -3497,14 +3861,15 @@ index cec8c323..dcd2bfeb 100644
 +module.exports = Text;
 diff --git a/src/core/text/TextV8.js b/src/core/text/TextV8.js
 new file mode 100644
-index 00000000..31394734
+index 00000000..c015fbe9
 --- /dev/null
 +++ b/src/core/text/TextV8.js
-@@ -0,0 +1,354 @@
+@@ -0,0 +1,386 @@
 +/* eslint max-depth: [2, 8] */
 +import Container from '../display/Container';
 +import { sign } from '../utils';
 +import TextStyle from './TextStyle';
++import { Point } from '../math';
 +
 +const defaultDestroyOptions = {
 +    texture: true,
@@ -3551,6 +3916,17 @@ index 00000000..31394734
 +         * @private
 +         */
 +        this._text = null;
++
++        /**
++         * The anchor sets the origin point of the texture.
++         * The default is 0,0 this means the texture's origin is the top left
++         * Setting the anchor to 0.5,0.5 means the texture's origin is centered
++         * Setting the anchor to 1,1 would mean the texture's origin point will be the bottom right corner
++         *
++         * @member {PIXI.Point}
++         * @private
++         */
++        this._anchor = new Point();
 +
 +        /**
 +         * Private tracker for the current style.
@@ -3652,6 +4028,8 @@ index 00000000..31394734
 +        }
 +
 +        options = Object.assign({}, defaultDestroyOptions, options);
++
++        this._anchor = null;
 +
 +        super.destroy(options);
 +
@@ -3851,6 +4229,24 @@ index 00000000..31394734
 +        const fontFamilyKey = this._getFontFamilyKey(fontFamily);
 +
 +        return TextV8.fontResourceCache[fontFamilyKey];
++    }
++
++    /**
++     * The anchor sets the origin point of the texture.
++     * The default is 0,0 this means the texture's origin is the top left
++     * Setting the anchor to 0.5,0.5 means the texture's origin is centered
++     * Setting the anchor to 1,1 would mean the texture's origin point will be the bottom right corner
++     *
++     * @member {PIXI.ObservablePoint}
++     */
++    get anchor()
++    {
++        return this._anchor;
++    }
++
++    set anchor(value) // eslint-disable-line require-jsdoc
++    {
++        this._anchor.copy(value);
 +    }
 +}
 +
@@ -4778,10 +5174,10 @@ index 00000000..93d923a8
 +}
 diff --git a/src/core/text/pxscene/PXSceneTextRenderer.js b/src/core/text/pxscene/PXSceneTextRenderer.js
 new file mode 100644
-index 00000000..1fef811f
+index 00000000..4971e742
 --- /dev/null
 +++ b/src/core/text/pxscene/PXSceneTextRenderer.js
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,191 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import { string2hexV8 } from '../../utils';
 +import { Point } from '../../math';
@@ -4832,12 +5228,14 @@ index 00000000..1fef811f
 +        const point = new Point(text.x, text.y);
 +        const globalPoint = text.parent.toGlobal(point);
 +
++        const textMeasure = fontResource.measureText(font.fontSize, text.text);
++
 +        // Calculate all attributes
 +        if (text.renderedObject)
 +        {
 +            const renderedObject = text.renderedObject;
 +
-+            const attr = this._calcTextAttributes(globalPoint, text);
++            const attr = this._calcTextAttributes(globalPoint, text, textMeasure);
 +
 +            renderedObject.x = attr.x;
 +            renderedObject.y = attr.y;
@@ -4850,12 +5248,14 @@ index 00000000..1fef811f
 +        }
 +        else
 +        {
-+            const attr = this._calcTextAttributes(globalPoint, text);
++            const attr = this._calcTextAttributes(globalPoint, text, textMeasure);
++
++            const parentRenderedObject = (text.parent && text.parent.renderedObject) || this.renderer.context;
 +
 +            // Create a container first
 +            text.renderedObject = this.renderer.view.create({
 +                t: 'rect',
-+                parent: this.renderer.context,
++                parent: parentRenderedObject,
 +                x: attr.x,
 +                y: attr.y,
 +                cx: attr.cx,
@@ -4895,8 +5295,6 @@ index 00000000..1fef811f
 +            createTextStyle.y = 0;
 +            text.renderedObjectText = this.renderer.view.create(createTextStyle);
 +
-+            const textMeasure = fontResource.measureText(font.fontSize, text.text);
-+
 +            text.renderedObject.w = textMeasure.w;
 +            text.renderedObject.h = textMeasure.h;
 +        }
@@ -4926,15 +5324,16 @@ index 00000000..1fef811f
 +     *
 +     * @param {Point} globalPoint - Global Point of the text
 +     * @param {TextV8} text - TextV8 object.
++     * @param {Object} textMeasure - The measurement of the text with specific font and size.
 +     * @return {Object} The calculated attributes.
 +     * @private
 +     */
-+    _calcTextAttributes(globalPoint, text)
++    _calcTextAttributes(globalPoint, text, textMeasure)
 +    {
-+        const x = globalPoint.x;
-+        const y = globalPoint.y;
-+        const cx = 0;
-+        const cy = 0;
++        const cx = textMeasure.w * text.anchor.x;
++        const cy = textMeasure.h * text.anchor.y;
++        const x = globalPoint.x - cx;
++        const y = globalPoint.y - cy;
 +        const a = 1;
 +        const worldTransform = {
 +            skew: {},
@@ -5186,10 +5585,10 @@ index eb4ae5cb..e48dff20 100644
      return !ios;
  }
 diff --git a/src/core/utils/index.js b/src/core/utils/index.js
-index 2f9c71b7..b58a3439 100644
+index 2f9c71b7..9b346240 100644
 --- a/src/core/utils/index.js
 +++ b/src/core/utils/index.js
-@@ -86,6 +86,50 @@ export function hex2string(hex)
+@@ -86,6 +86,54 @@ export function hex2string(hex)
  }
  
  /**
@@ -5231,6 +5630,10 @@ index 2f9c71b7..b58a3439 100644
 +    {
 +        return 0x00FF00FF;
 +    }
++    else if (str === 'white')
++    {
++        return 0xFFFFFFFF;
++    }
 +
 +    // By default it is black.
 +    return 0x000000FF;
@@ -5240,7 +5643,7 @@ index 2f9c71b7..b58a3439 100644
   * Converts a color as an [R, G, B] array to a hex number
   *
   * @memberof PIXI.utils
-@@ -99,6 +143,32 @@ export function rgb2hex(rgb)
+@@ -99,6 +147,56 @@ export function rgb2hex(rgb)
  }
  
  /**
@@ -5270,10 +5673,34 @@ index 2f9c71b7..b58a3439 100644
 +}
 +
 +/**
++ * Converts a hex color as RRGGBB to RRGGBBAA
++ *
++ * @memberof PIXI.utils
++ * @function hexrgb2rgba
++ * @param {number} rgb - a hex color in rgb
++ * @return {number} a hex color in rgba
++ */
++export function hexrgb2rgba(rgb)
++{
++    let b = rgb & 0xFF;
++    let g = (rgb >> 8) & 0xFF;
++    let r = (rgb >> 16) & 0xFF;
++
++    const min = Math.min(r, g, b);
++    const a = 255 - min;
++
++    b = (b - min) * 255 / a;
++    g = (g - min) * 255 / a;
++    r = (r - min) * 255 / a;
++
++    return (r << 24) | (g << 16) | (b << 8) | a;
++}
++
++/**
   * get the resolution / device pixel ratio of an asset by looking for the prefix
   * used by spritesheets and image urls
   *
-@@ -234,7 +304,7 @@ export function sayHello(type)
+@@ -234,7 +332,7 @@ export function sayHello(type)
          return;
      }
  
@@ -5282,7 +5709,7 @@ index 2f9c71b7..b58a3439 100644
      {
          const args = [
              `\n %c %c %c Pixi.js ${VERSION} - ✰ ${type} ✰  %c  %c  http://www.pixijs.com/  %c %c ♥%c♥%c♥ \n\n`,
-@@ -251,7 +321,7 @@ export function sayHello(type)
+@@ -251,7 +349,7 @@ export function sayHello(type)
  
          window.console.log.apply(console, args);
      }
@@ -5291,7 +5718,7 @@ index 2f9c71b7..b58a3439 100644
      {
          window.console.log(`Pixi.js ${VERSION} - ${type} - http://www.pixijs.com/`);
      }
-@@ -303,6 +373,18 @@ export function isWebGLSupported()
+@@ -303,6 +401,18 @@ export function isWebGLSupported()
  }
  
  /**
@@ -5310,6 +5737,134 @@ index 2f9c71b7..b58a3439 100644
   * Returns sign of number
   *
   * @memberof PIXI.utils
+diff --git a/src/extras/cacheAsBitmap.js b/src/extras/cacheAsBitmap.js
+index 5dd56407..c51d423c 100644
+--- a/src/extras/cacheAsBitmap.js
++++ b/src/extras/cacheAsBitmap.js
+@@ -1,4 +1,6 @@
+ import * as core from '../core';
++import { isV8 } from '../core/utils';
++import * as _ from 'lodash';
+ 
+ const DisplayObject = core.DisplayObject;
+ const _tempMatrix = new core.Matrix();
+@@ -22,6 +24,7 @@ class CacheData
+     {
+         this.originalRenderWebGL = null;
+         this.originalRenderCanvas = null;
++        this.originalRenderPXScene = null;
+         this.originalCalculateBounds = null;
+         this.originalGetLocalBounds = null;
+ 
+@@ -74,6 +77,7 @@ Object.defineProperties(DisplayObject.prototype, {
+ 
+                 data.originalRenderWebGL = this.renderWebGL;
+                 data.originalRenderCanvas = this.renderCanvas;
++                data.originalRenderPXScene = this.renderPXScene;
+ 
+                 data.originalUpdateTransform = this.updateTransform;
+                 data.originalCalculateBounds = this._calculateBounds;
+@@ -88,6 +92,7 @@ Object.defineProperties(DisplayObject.prototype, {
+ 
+                 this.renderWebGL = this._renderCachedWebGL;
+                 this.renderCanvas = this._renderCachedCanvas;
++                this.renderPXScene = this._renderCachedPXScene;
+ 
+                 this.destroy = this._cacheAsBitmapDestroy;
+             }
+@@ -97,11 +102,19 @@ Object.defineProperties(DisplayObject.prototype, {
+ 
+                 if (data.sprite)
+                 {
+-                    this._destroyCachedDisplayObject();
++                    if (isV8())
++                    {
++                        data.sprite = null;
++                    }
++                    else
++                    {
++                        this._destroyCachedDisplayObject();
++                    }
+                 }
+ 
+                 this.renderWebGL = data.originalRenderWebGL;
+                 this.renderCanvas = data.originalRenderCanvas;
++                this.renderPXScene = data.originalRenderPXScene;
+                 this._calculateBounds = data.originalCalculateBounds;
+                 this.getLocalBounds = data.originalGetLocalBounds;
+ 
+@@ -112,6 +125,11 @@ Object.defineProperties(DisplayObject.prototype, {
+ 
+                 this._mask = data.originalMask;
+                 this.filterArea = data.originalFilterArea;
++
++                if (isV8())
++                {
++                    this.enablePaintingForChildren(true);
++                }
+             }
+         },
+     },
+@@ -323,6 +341,59 @@ DisplayObject.prototype._initCachedDisplayObjectCanvas = function _initCachedDis
+ };
+ 
+ /**
++ * Renders a cached version of the sprite with PXScene
++ *
++ * @private
++ * @memberof PIXI.DisplayObject#
++ * @param {PIXI.WebGLRenderer} renderer - the WebGL renderer
++ */
++DisplayObject.prototype._renderCachedPXScene = function _renderCachedPXScene(renderer)
++{
++    if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
++    {
++        return;
++    }
++
++    // No need to create a new render texture for now, just
++    // stop painting for each child
++    this._cacheData.sprite = this;
++
++    this.enablePaintingForChildren.call(this._cacheData.sprite, false);
++
++    this._cacheData.originalRenderPXScene.call(this._cacheData.sprite, renderer);
++};
++
++DisplayObject.prototype.enablePaintingForChildren = function enablePaintingForChildren(enabled)
++{
++    for (let i = 0, j = this.children.length; i < j; ++i)
++    {
++        const child = this.children[i];
++
++        if (!enabled)
++        {
++            if (!child.__hasBackup)
++            {
++                child.__backupScale = _.cloneDeep(child.scale);
++                child.__backupPosition = _.cloneDeep(child.position);
++                child.__backupRotation = child.rotation;
++                child.__backupAlpha = child.alpha;
++
++                child.__hasBackup = true;
++            }
++
++            child.scale = child.__backupScale;
++            child.position = child.__backupPosition;
++            child.rotation = child.__backupRotation;
++            child.alpha = child.__backupAlpha;
++        }
++        else
++        {
++            child.__hasBackup = false;
++        }
++    }
++};
++
++/**
+  * Calculates the bounds of the cached sprite
+  *
+  * @private
 diff --git a/src/extras/index.js b/src/extras/index.js
 index bbd8bbf2..3ca7a923 100644
 --- a/src/extras/index.js
@@ -5875,41 +6430,302 @@ index ac742252..331dc83b 100644
  core.WebGLRenderer.registerPlugin('interaction', InteractionManager);
  core.CanvasRenderer.registerPlugin('interaction', InteractionManager);
 +core.PXSceneRenderer.registerPlugin('interaction', InteractionManager);
-diff --git a/src/loaders/bitmapFontParser.js b/src/loaders/browser/bitmapFontParser.js
-similarity index 97%
-rename from src/loaders/bitmapFontParser.js
-rename to src/loaders/browser/bitmapFontParser.js
-index f4cf9967..8199c48a 100644
+diff --git a/src/loaders/bitmapFontParser.js b/src/loaders/bitmapFontParser.js
+deleted file mode 100644
+index f4cf9967..00000000
 --- a/src/loaders/bitmapFontParser.js
-+++ b/src/loaders/browser/bitmapFontParser.js
-@@ -1,7 +1,7 @@
- import * as path from 'path';
++++ /dev/null
+@@ -1,95 +0,0 @@
+-import * as path from 'path';
 -import { utils } from '../core';
-+import { utils } from '../../core';
- import { Resource } from 'resource-loader';
+-import { Resource } from 'resource-loader';
 -import { BitmapText } from '../extras';
+-
+-/**
+- * Register a BitmapText font from loader resource.
+- *
+- * @function parseBitmapFontData
+- * @memberof PIXI.loaders
+- * @param {PIXI.loaders.Resource} resource - Loader resource.
+- * @param {PIXI.Texture} texture - Reference to texture.
+- */
+-export function parse(resource, texture)
+-{
+-    resource.bitmapFont = BitmapText.registerFont(resource.data, texture);
+-}
+-
+-export default function ()
+-{
+-    return function bitmapFontParser(resource, next)
+-    {
+-        // skip if no data or not xml data
+-        if (!resource.data || resource.type !== Resource.TYPE.XML)
+-        {
+-            next();
+-
+-            return;
+-        }
+-
+-        // skip if not bitmap font data, using some silly duck-typing
+-        if (resource.data.getElementsByTagName('page').length === 0
+-            || resource.data.getElementsByTagName('info').length === 0
+-            || resource.data.getElementsByTagName('info')[0].getAttribute('face') === null
+-        )
+-        {
+-            next();
+-
+-            return;
+-        }
+-
+-        let xmlUrl = !resource.isDataUrl ? path.dirname(resource.url) : '';
+-
+-        if (resource.isDataUrl)
+-        {
+-            if (xmlUrl === '.')
+-            {
+-                xmlUrl = '';
+-            }
+-
+-            if (this.baseUrl && xmlUrl)
+-            {
+-                // if baseurl has a trailing slash then add one to xmlUrl so the replace works below
+-                if (this.baseUrl.charAt(this.baseUrl.length - 1) === '/')
+-                {
+-                    xmlUrl += '/';
+-                }
+-
+-                // remove baseUrl from xmlUrl
+-                xmlUrl = xmlUrl.replace(this.baseUrl, '');
+-            }
+-        }
+-
+-        // if there is an xmlUrl now, it needs a trailing slash. Ensure that it does if the string isn't empty.
+-        if (xmlUrl && xmlUrl.charAt(xmlUrl.length - 1) !== '/')
+-        {
+-            xmlUrl += '/';
+-        }
+-
+-        const textureUrl = xmlUrl + resource.data.getElementsByTagName('page')[0].getAttribute('file');
+-
+-        if (utils.TextureCache[textureUrl])
+-        {
+-            // reuse existing texture
+-            parse(resource, utils.TextureCache[textureUrl]);
+-            next();
+-        }
+-        else
+-        {
+-            const loadOptions = {
+-                crossOrigin: resource.crossOrigin,
+-                loadType: Resource.LOAD_TYPE.IMAGE,
+-                metadata: resource.metadata.imageMetadata,
+-                parentResource: resource,
+-            };
+-
+-            // load the texture for the font
+-            this.add(`${resource.name}_image`, textureUrl, loadOptions, (res) =>
+-            {
+-                parse(resource, res.texture);
+-                next();
+-            });
+-        }
+-    };
+-}
+diff --git a/src/loaders/browser/bitmapFontParser.js b/src/loaders/browser/bitmapFontParser.js
+new file mode 100644
+index 00000000..8199c48a
+--- /dev/null
++++ b/src/loaders/browser/bitmapFontParser.js
+@@ -0,0 +1,95 @@
++import * as path from 'path';
++import { utils } from '../../core';
++import { Resource } from 'resource-loader';
 +import { BitmapText } from '../../extras';
- 
- /**
-  * Register a BitmapText font from loader resource.
-diff --git a/src/loaders/loader.js b/src/loaders/browser/loader.js
-similarity index 95%
-rename from src/loaders/loader.js
-rename to src/loaders/browser/loader.js
-index 0a670cb8..807a4c74 100644
---- a/src/loaders/loader.js
++
++/**
++ * Register a BitmapText font from loader resource.
++ *
++ * @function parseBitmapFontData
++ * @memberof PIXI.loaders
++ * @param {PIXI.loaders.Resource} resource - Loader resource.
++ * @param {PIXI.Texture} texture - Reference to texture.
++ */
++export function parse(resource, texture)
++{
++    resource.bitmapFont = BitmapText.registerFont(resource.data, texture);
++}
++
++export default function ()
++{
++    return function bitmapFontParser(resource, next)
++    {
++        // skip if no data or not xml data
++        if (!resource.data || resource.type !== Resource.TYPE.XML)
++        {
++            next();
++
++            return;
++        }
++
++        // skip if not bitmap font data, using some silly duck-typing
++        if (resource.data.getElementsByTagName('page').length === 0
++            || resource.data.getElementsByTagName('info').length === 0
++            || resource.data.getElementsByTagName('info')[0].getAttribute('face') === null
++        )
++        {
++            next();
++
++            return;
++        }
++
++        let xmlUrl = !resource.isDataUrl ? path.dirname(resource.url) : '';
++
++        if (resource.isDataUrl)
++        {
++            if (xmlUrl === '.')
++            {
++                xmlUrl = '';
++            }
++
++            if (this.baseUrl && xmlUrl)
++            {
++                // if baseurl has a trailing slash then add one to xmlUrl so the replace works below
++                if (this.baseUrl.charAt(this.baseUrl.length - 1) === '/')
++                {
++                    xmlUrl += '/';
++                }
++
++                // remove baseUrl from xmlUrl
++                xmlUrl = xmlUrl.replace(this.baseUrl, '');
++            }
++        }
++
++        // if there is an xmlUrl now, it needs a trailing slash. Ensure that it does if the string isn't empty.
++        if (xmlUrl && xmlUrl.charAt(xmlUrl.length - 1) !== '/')
++        {
++            xmlUrl += '/';
++        }
++
++        const textureUrl = xmlUrl + resource.data.getElementsByTagName('page')[0].getAttribute('file');
++
++        if (utils.TextureCache[textureUrl])
++        {
++            // reuse existing texture
++            parse(resource, utils.TextureCache[textureUrl]);
++            next();
++        }
++        else
++        {
++            const loadOptions = {
++                crossOrigin: resource.crossOrigin,
++                loadType: Resource.LOAD_TYPE.IMAGE,
++                metadata: resource.metadata.imageMetadata,
++                parentResource: resource,
++            };
++
++            // load the texture for the font
++            this.add(`${resource.name}_image`, textureUrl, loadOptions, (res) =>
++            {
++                parse(resource, res.texture);
++                next();
++            });
++        }
++    };
++}
+diff --git a/src/loaders/browser/loader.js b/src/loaders/browser/loader.js
+new file mode 100644
+index 00000000..807a4c74
+--- /dev/null
 +++ b/src/loaders/browser/loader.js
-@@ -1,8 +1,8 @@
- import ResourceLoader from 'resource-loader';
- import { blobMiddlewareFactory } from 'resource-loader/lib/middlewares/parsing/blob';
- import EventEmitter from 'eventemitter3';
--import textureParser from './textureParser';
--import spritesheetParser from './spritesheetParser';
+@@ -0,0 +1,88 @@
++import ResourceLoader from 'resource-loader';
++import { blobMiddlewareFactory } from 'resource-loader/lib/middlewares/parsing/blob';
++import EventEmitter from 'eventemitter3';
 +import textureParser from '../utils/textureParser';
 +import spritesheetParser from '../utils/spritesheetParser';
- import bitmapFontParser from './bitmapFontParser';
- 
- /**
++import bitmapFontParser from './bitmapFontParser';
++
++/**
++ *
++ * The new loader, extends Resource Loader by Chad Engler : https://github.com/englercj/resource-loader
++ *
++ * ```js
++ * let loader = PIXI.loader; // pixi exposes a premade instance for you to use.
++ * //or
++ * let loader = new PIXI.loaders.Loader(); // you can also create your own if you want
++ *
++ * loader.add('bunny', 'data/bunny.png');
++ * loader.add('spaceship', 'assets/spritesheet.json');
++ * loader.add('scoreFont', 'assets/score.fnt');
++ *
++ * loader.once('complete',onAssetsLoaded);
++ *
++ * loader.load();
++ * ```
++ *
++ * @see https://github.com/englercj/resource-loader
++ *
++ * @class
++ * @extends module:resource-loader.ResourceLoader
++ * @memberof PIXI.loaders
++ */
++export default class Loader extends ResourceLoader
++{
++    /**
++     * @param {string} [baseUrl=''] - The base url for all resources loaded by this loader.
++     * @param {number} [concurrency=10] - The number of resources to load concurrently.
++     */
++    constructor(baseUrl, concurrency)
++    {
++        super(baseUrl, concurrency);
++        EventEmitter.call(this);
++
++        for (let i = 0; i < Loader._pixiMiddleware.length; ++i)
++        {
++            this.use(Loader._pixiMiddleware[i]());
++        }
++
++        // Compat layer, translate the new v2 signals into old v1 events.
++        this.onStart.add((l) => this.emit('start', l));
++        this.onProgress.add((l, r) => this.emit('progress', l, r));
++        this.onError.add((e, l, r) => this.emit('error', e, l, r));
++        this.onLoad.add((l, r) => this.emit('load', l, r));
++        this.onComplete.add((l, r) => this.emit('complete', l, r));
++    }
++
++    /**
++     * Adds a default middleware to the pixi loader.
++     *
++     * @static
++     * @param {Function} fn - The middleware to add.
++     */
++    static addPixiMiddleware(fn)
++    {
++        Loader._pixiMiddleware.push(fn);
++    }
++}
++
++// Copy EE3 prototype (mixin)
++for (const k in EventEmitter.prototype)
++{
++    Loader.prototype[k] = EventEmitter.prototype[k];
++}
++
++Loader._pixiMiddleware = [
++    // parse any blob into more usable objects (e.g. Image)
++    blobMiddlewareFactory,
++    // parse any Image objects into textures
++    textureParser,
++    // parse any spritesheet data into multiple textures
++    spritesheetParser,
++    // parse bitmap font data into multiple textures
++    bitmapFontParser,
++];
++
++// Add custom extentions
++const Resource = ResourceLoader.Resource;
++
++Resource.setExtensionXhrType('fnt', Resource.XHR_RESPONSE_TYPE.DOCUMENT);
 diff --git a/src/loaders/index.js b/src/loaders/index.js
 index 51897931..d13c8d60 100644
 --- a/src/loaders/index.js
@@ -5967,6 +6783,100 @@ index 51897931..d13c8d60 100644
 +        textureParser,
 +    };
 +}
+diff --git a/src/loaders/loader.js b/src/loaders/loader.js
+deleted file mode 100644
+index 0a670cb8..00000000
+--- a/src/loaders/loader.js
++++ /dev/null
+@@ -1,88 +0,0 @@
+-import ResourceLoader from 'resource-loader';
+-import { blobMiddlewareFactory } from 'resource-loader/lib/middlewares/parsing/blob';
+-import EventEmitter from 'eventemitter3';
+-import textureParser from './textureParser';
+-import spritesheetParser from './spritesheetParser';
+-import bitmapFontParser from './bitmapFontParser';
+-
+-/**
+- *
+- * The new loader, extends Resource Loader by Chad Engler : https://github.com/englercj/resource-loader
+- *
+- * ```js
+- * let loader = PIXI.loader; // pixi exposes a premade instance for you to use.
+- * //or
+- * let loader = new PIXI.loaders.Loader(); // you can also create your own if you want
+- *
+- * loader.add('bunny', 'data/bunny.png');
+- * loader.add('spaceship', 'assets/spritesheet.json');
+- * loader.add('scoreFont', 'assets/score.fnt');
+- *
+- * loader.once('complete',onAssetsLoaded);
+- *
+- * loader.load();
+- * ```
+- *
+- * @see https://github.com/englercj/resource-loader
+- *
+- * @class
+- * @extends module:resource-loader.ResourceLoader
+- * @memberof PIXI.loaders
+- */
+-export default class Loader extends ResourceLoader
+-{
+-    /**
+-     * @param {string} [baseUrl=''] - The base url for all resources loaded by this loader.
+-     * @param {number} [concurrency=10] - The number of resources to load concurrently.
+-     */
+-    constructor(baseUrl, concurrency)
+-    {
+-        super(baseUrl, concurrency);
+-        EventEmitter.call(this);
+-
+-        for (let i = 0; i < Loader._pixiMiddleware.length; ++i)
+-        {
+-            this.use(Loader._pixiMiddleware[i]());
+-        }
+-
+-        // Compat layer, translate the new v2 signals into old v1 events.
+-        this.onStart.add((l) => this.emit('start', l));
+-        this.onProgress.add((l, r) => this.emit('progress', l, r));
+-        this.onError.add((e, l, r) => this.emit('error', e, l, r));
+-        this.onLoad.add((l, r) => this.emit('load', l, r));
+-        this.onComplete.add((l, r) => this.emit('complete', l, r));
+-    }
+-
+-    /**
+-     * Adds a default middleware to the pixi loader.
+-     *
+-     * @static
+-     * @param {Function} fn - The middleware to add.
+-     */
+-    static addPixiMiddleware(fn)
+-    {
+-        Loader._pixiMiddleware.push(fn);
+-    }
+-}
+-
+-// Copy EE3 prototype (mixin)
+-for (const k in EventEmitter.prototype)
+-{
+-    Loader.prototype[k] = EventEmitter.prototype[k];
+-}
+-
+-Loader._pixiMiddleware = [
+-    // parse any blob into more usable objects (e.g. Image)
+-    blobMiddlewareFactory,
+-    // parse any Image objects into textures
+-    textureParser,
+-    // parse any spritesheet data into multiple textures
+-    spritesheetParser,
+-    // parse bitmap font data into multiple textures
+-    bitmapFontParser,
+-];
+-
+-// Add custom extentions
+-const Resource = ResourceLoader.Resource;
+-
+-Resource.setExtensionXhrType('fnt', Resource.XHR_RESPONSE_TYPE.DOCUMENT);
 diff --git a/src/loaders/pxscene/loader.js b/src/loaders/pxscene/loader.js
 new file mode 100644
 index 00000000..1125a573
@@ -7388,18 +8298,103 @@ index 00000000..605c09a3
 +
 +    map[extname] = val;
 +}
-diff --git a/src/loaders/spritesheetParser.js b/src/loaders/utils/spritesheetParser.js
-similarity index 84%
-rename from src/loaders/spritesheetParser.js
-rename to src/loaders/utils/spritesheetParser.js
-index e57dfb28..51cecdff 100644
+diff --git a/src/loaders/spritesheetParser.js b/src/loaders/spritesheetParser.js
+deleted file mode 100644
+index e57dfb28..00000000
 --- a/src/loaders/spritesheetParser.js
-+++ b/src/loaders/utils/spritesheetParser.js
-@@ -1,6 +1,17 @@
++++ /dev/null
+@@ -1,58 +0,0 @@
 -import { Resource } from 'resource-loader';
-+import { isV8 } from '../../core/utils';
- import path from 'path';
+-import path from 'path';
 -import { Spritesheet } from '../core';
+-
+-export default function ()
+-{
+-    return function spritesheetParser(resource, next)
+-    {
+-        let resourcePath;
+-        const imageResourceName = `${resource.name}_image`;
+-
+-        // skip if no data, its not json, it isn't spritesheet data, or the image resource already exists
+-        if (!resource.data
+-            || resource.type !== Resource.TYPE.JSON
+-            || !resource.data.frames
+-            || this.resources[imageResourceName]
+-        )
+-        {
+-            next();
+-
+-            return;
+-        }
+-
+-        const loadOptions = {
+-            crossOrigin: resource.crossOrigin,
+-            loadType: Resource.LOAD_TYPE.IMAGE,
+-            metadata: resource.metadata.imageMetadata,
+-            parentResource: resource,
+-        };
+-
+-        // Prepend url path unless the resource image is a data url
+-        if (resource.isDataUrl)
+-        {
+-            resourcePath = resource.data.meta.image;
+-        }
+-        else
+-        {
+-            resourcePath = `${path.dirname(resource.url.replace(this.baseUrl, ''))}/${resource.data.meta.image}`;
+-        }
+-
+-        // load the image for this sheet
+-        this.add(imageResourceName, resourcePath, loadOptions, function onImageLoad(res)
+-        {
+-            const spritesheet = new Spritesheet(
+-                res.texture.baseTexture,
+-                resource.data,
+-                resource.url
+-            );
+-
+-            spritesheet.parse(() =>
+-            {
+-                resource.spritesheet = spritesheet;
+-                resource.textures = spritesheet.textures;
+-                next();
+-            });
+-        });
+-    };
+-}
+diff --git a/src/loaders/textureParser.js b/src/loaders/textureParser.js
+deleted file mode 100644
+index 480edc1c..00000000
+--- a/src/loaders/textureParser.js
++++ /dev/null
+@@ -1,19 +0,0 @@
+-import { Resource } from 'resource-loader';
+-import Texture from '../core/textures/Texture';
+-
+-export default function ()
+-{
+-    return function textureParser(resource, next)
+-    {
+-        // create a new texture if the data is an Image object
+-        if (resource.data && resource.type === Resource.TYPE.IMAGE)
+-        {
+-            resource.texture = Texture.fromLoader(
+-                resource.data,
+-                resource.url,
+-                resource.name
+-            );
+-        }
+-        next();
+-    };
+-}
+diff --git a/src/loaders/utils/spritesheetParser.js b/src/loaders/utils/spritesheetParser.js
+new file mode 100644
+index 00000000..51cecdff
+--- /dev/null
++++ b/src/loaders/utils/spritesheetParser.js
+@@ -0,0 +1,69 @@
++import { isV8 } from '../../core/utils';
++import path from 'path';
 +import { Spritesheet } from '../../core';
 +
 +let Resource;
@@ -7412,19 +8407,67 @@ index e57dfb28..51cecdff 100644
 +{
 +    Resource = require('resource-loader'); // eslint-disable-line global-require
 +}
- 
- export default function ()
- {
-diff --git a/src/loaders/textureParser.js b/src/loaders/utils/textureParser.js
-similarity index 57%
-rename from src/loaders/textureParser.js
-rename to src/loaders/utils/textureParser.js
-index 480edc1c..b84b5a1f 100644
---- a/src/loaders/textureParser.js
++
++export default function ()
++{
++    return function spritesheetParser(resource, next)
++    {
++        let resourcePath;
++        const imageResourceName = `${resource.name}_image`;
++
++        // skip if no data, its not json, it isn't spritesheet data, or the image resource already exists
++        if (!resource.data
++            || resource.type !== Resource.TYPE.JSON
++            || !resource.data.frames
++            || this.resources[imageResourceName]
++        )
++        {
++            next();
++
++            return;
++        }
++
++        const loadOptions = {
++            crossOrigin: resource.crossOrigin,
++            loadType: Resource.LOAD_TYPE.IMAGE,
++            metadata: resource.metadata.imageMetadata,
++            parentResource: resource,
++        };
++
++        // Prepend url path unless the resource image is a data url
++        if (resource.isDataUrl)
++        {
++            resourcePath = resource.data.meta.image;
++        }
++        else
++        {
++            resourcePath = `${path.dirname(resource.url.replace(this.baseUrl, ''))}/${resource.data.meta.image}`;
++        }
++
++        // load the image for this sheet
++        this.add(imageResourceName, resourcePath, loadOptions, function onImageLoad(res)
++        {
++            const spritesheet = new Spritesheet(
++                res.texture.baseTexture,
++                resource.data,
++                resource.url
++            );
++
++            spritesheet.parse(() =>
++            {
++                resource.spritesheet = spritesheet;
++                resource.textures = spritesheet.textures;
++                next();
++            });
++        });
++    };
++}
+diff --git a/src/loaders/utils/textureParser.js b/src/loaders/utils/textureParser.js
+new file mode 100644
+index 00000000..b84b5a1f
+--- /dev/null
 +++ b/src/loaders/utils/textureParser.js
-@@ -1,5 +1,17 @@
--import { Resource } from 'resource-loader';
--import Texture from '../core/textures/Texture';
+@@ -0,0 +1,31 @@
 +import { isV8 } from '../../core/utils';
 +
 +let Resource;
@@ -7439,9 +8482,148 @@ index 480edc1c..b84b5a1f 100644
 +}
 +
 +import Texture from '../../core/textures/Texture';
++
++export default function ()
++{
++    return function textureParser(resource, next)
++    {
++        // create a new texture if the data is an Image object
++        if (resource.data && resource.type === Resource.TYPE.IMAGE)
++        {
++            resource.texture = Texture.fromLoader(
++                resource.data,
++                resource.url,
++                resource.name
++            );
++        }
++        next();
++    };
++}
+diff --git a/src/particles/ParticleContainer.js b/src/particles/ParticleContainer.js
+index 67796cf2..071db1c3 100644
+--- a/src/particles/ParticleContainer.js
++++ b/src/particles/ParticleContainer.js
+@@ -1,4 +1,5 @@
+ import * as core from '../core';
++import * as _ from 'lodash';
  
- export default function ()
- {
+ /**
+  * The ParticleContainer class is a really fast version of the Container built solely for speed,
+@@ -179,6 +180,114 @@ export default class ParticleContainer extends core.Container
+     }
+ 
+     /**
++     * Adds one or more children to the container.
++     *
++     * Multiple items can be added like so: `myContainer.addChild(thingOne, thingTwo, thingThree)`
++     *
++     * @param {...PIXI.DisplayObject} child - The DisplayObject(s) to add to the container
++     * @return {PIXI.DisplayObject} The first child that was added.
++     */
++    addChild(child)
++    {
++        const addedChild = super.addChild(child);
++
++        // Remember the initial x, y when it adds to the particle container.
++        addedChild.__initPosition = _.cloneDeep(addedChild.position);
++
++        return addedChild;
++    }
++
++    /**
++     * Renders the object using the PXScene renderer
++     *
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    renderPXScene(renderer)
++    {
++        // if not visible or the alpha is 0 then no need to render this
++        if (!this.visible || this.worldAlpha <= 0 || !this.renderable)
++        {
++            return;
++        }
++
++        this._renderPXScene(renderer);
++
++        // Set children's properties based on the properties
++        for (let i = 0, j = this.children.length; i < j; ++i)
++        {
++            const child = this.children[i];
++
++            // 1. Backup original properties
++            // Reset tint color, it seems tint doesn't work
++            child.__backupTint = child.tint;
++            child.tint = 0xFFFFFF;
++
++            // scale
++            if (!this._properties[0])
++            {
++                child.__backupScale = _.cloneDeep(child.scale);
++                child.scale.set(1);
++            }
++
++            // position
++            if (!this._properties[1])
++            {
++                child.__backupPosition = _.cloneDeep(child.position);
++                child.position = child.__initPosition;
++            }
++
++            // rotation
++            if (!this._properties[2])
++            {
++                child.__backupRotation = child.rotation;
++                child.rotation = 0;
++            }
++
++            // uvs (pxscene doesn't support it, ignore)
++
++            // alpha
++            if (!this._properties[4])
++            {
++                child.__backupAlpha = child.alpha;
++                child.alpha = 1;
++            }
++
++            // 2. Render
++            child.renderPXScene(renderer);
++
++            // 3. Restore
++            // Restore tint color
++            child.tint = child.__backupTint;
++
++            // scale
++            if (!this._properties[0])
++            {
++                child.scale = child.__backupScale;
++            }
++
++            // position
++            if (!this._properties[1])
++            {
++                child.position = child.__backupPosition;
++            }
++
++            // rotation
++            if (!this._properties[2])
++            {
++                child.rotation = child.__backupRotation;
++            }
++
++            // uvs (pxscene doesn't support it, ignore)
++
++            // alpha
++            if (!this._properties[4])
++            {
++                child.alpha = child.__backupAlpha;
++            }
++        }
++    }
++
++    /**
+      * Set the flag that static data should be updated to true
+      *
+      * @private
 diff --git a/src/polyfill/index.js b/src/polyfill/index.js
 index d963deec..f54d5709 100644
 --- a/src/polyfill/index.js

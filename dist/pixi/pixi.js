@@ -1,6 +1,6 @@
 /*!
  * pixi.js - v4.3.4
- * Compiled Mon, 27 Feb 2017 00:07:20 UTC
+ * Compiled Sat, 25 Feb 2017 12:25:20 UTC
  *
  * pixi.js is licensed under the MIT License.
  * http://www.opensource.org/licenses/mit-license
@@ -25418,7 +25418,7 @@ var WRAP_MODES = exports.WRAP_MODES = {
  * The gc modes that are supported by pixi.
  *
  * The {@link PIXI.settings.GC_MODE} Garbage Collection mode for pixi textures is AUTO
- * If set to GC_MODE, the renderer will occasianally check textures usage. If they are not
+ * If set to GC_MODE, the renderer will occasionally check textures usage. If they are not
  * used for a specified period of time they will be removed from the GPU. They will of course
  * be uploaded again when they are required. This is a silent behind the scenes process that
  * should ensure that the GPU does not  get filled up.
@@ -26420,6 +26420,79 @@ var Container = function (_DisplayObject) {
         renderedObject.w = this.width;
         renderedObject.h = this.height;
         renderedObject.r = this.rotation * (180 / Math.PI);
+        renderedObject.sx = this.scale.x;
+        renderedObject.sy = this.scale.y;
+
+        // mask
+        if (this.mask) {
+            var maskRenderedObject = this.mask.renderedObject;
+
+            if (maskRenderedObject) {
+                this.__backupMaskWidth = maskRenderedObject.w;
+                this.__backupMaskHeight = maskRenderedObject.h;
+                this.__backupMaskParent = maskRenderedObject.parent;
+                this.__backupMaskRenderedObject = maskRenderedObject;
+
+                if (this.mask.renderedObjects) {
+                    for (var i = 0, j = this.mask.renderedObjects.length; i < j; ++i) {
+                        var _maskRenderedObject = this.mask.renderedObjects[i];
+
+                        this.mask.renderedObject.w = _maskRenderedObject.w;
+                        this.mask.renderedObject.h = _maskRenderedObject.h;
+
+                        innerRenderMask.call(this, this.mask.renderedObject);
+                    }
+                } else {
+                    var _maskRenderedObject2 = this.mask.renderedObject;
+
+                    innerRenderMask.call(this, _maskRenderedObject2);
+                }
+            }
+        } else {
+            var renderedObjectMaskContainer = this.renderedObjectMaskContainer;
+
+            if (renderedObjectMaskContainer) {
+                var _maskRenderedObject3 = this.__backupMaskRenderedObject;
+
+                renderedObject.parent = renderedObjectMaskContainer.parent;
+
+                _maskRenderedObject3.parent = this.__backupMaskParent;
+
+                renderedObjectMaskContainer.remove();
+
+                _maskRenderedObject3.w = this.__backupMaskWidth;
+                _maskRenderedObject3.h = this.__backupMaskHeight;
+                _maskRenderedObject3.mask = false;
+
+                this.__backupMaskWidth = undefined;
+                this.__backupMaskHeight = undefined;
+                this.__backupMaskParent = undefined;
+                this.__backupMaskRenderedObject = undefined;
+                this.renderedObjectMaskContainer = null;
+            }
+        }
+
+        function innerRenderMask(maskRenderedObject) {
+            if (!this.renderedObjectMaskContainer) {
+                this.renderedObjectMaskContainer = renderer.view.create({
+                    t: 'rect',
+                    parent: renderedObject.parent,
+                    fillColor: 0
+                });
+            }
+
+            maskRenderedObject.parent = this.renderedObjectMaskContainer;
+            renderedObject.parent = this.renderedObjectMaskContainer;
+
+            var renderedObjectMaskContainer = this.renderedObjectMaskContainer;
+
+            renderedObjectMaskContainer.x = 0;
+            renderedObjectMaskContainer.y = 0;
+            renderedObjectMaskContainer.w = renderer.width;
+            renderedObjectMaskContainer.h = renderer.height;
+
+            maskRenderedObject.mask = true;
+        }
     };
 
     /**
@@ -26616,6 +26689,8 @@ var _Bounds = require('./Bounds');
 var _Bounds2 = _interopRequireDefault(_Bounds);
 
 var _math = require('../math');
+
+var _utils = require('../utils');
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
@@ -27227,14 +27302,18 @@ var DisplayObject = function (_EventEmitter) {
         },
         set: function set(value) // eslint-disable-line require-jsdoc
         {
-            if (this._mask) {
-                this._mask.renderable = true;
-            }
+            if ((0, _utils.isV8)()) {
+                this._mask = value;
+            } else {
+                if (this._mask) {
+                    this._mask.renderable = true;
+                }
 
-            this._mask = value;
+                this._mask = value;
 
-            if (this._mask) {
-                this._mask.renderable = false;
+                if (this._mask) {
+                    this._mask.renderable = false;
+                }
             }
         }
 
@@ -27266,7 +27345,7 @@ var DisplayObject = function (_EventEmitter) {
 exports.default = DisplayObject;
 DisplayObject.prototype.displayObjectUpdateTransform = DisplayObject.prototype.updateTransform;
 
-},{"../const":47,"../math":73,"../settings":106,"./Bounds":48,"./Transform":51,"./TransformStatic":53,"eventemitter3":4}],51:[function(require,module,exports){
+},{"../const":47,"../math":73,"../settings":106,"../utils":131,"./Bounds":48,"./Transform":51,"./TransformStatic":53,"eventemitter3":4}],51:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -30618,7 +30697,8 @@ var PXSceneGraphicsRenderer = function () {
 
         var circle = this.renderer.view.create({
             t: 'rect',
-            parent: parentRenderedObject
+            parent: parentRenderedObject,
+            clip: true
         });
 
         circle.w = spriteWidth * ratio;
@@ -35263,10 +35343,13 @@ var PXSceneRenderer = function (_SystemRenderer) {
      * @param {boolean} [clear=false] - Whether to clear the canvas before drawing
      * @param {PIXI.Transform} [transform] - A transformation to be applied
      * @param {boolean} [skipUpdateTransform=false] - Whether to skip the update transform
+     * @param {boolean} [forceRender=false] - forceRender a renderTexture, no matter the display object is changed or not.
      */
 
 
     PXSceneRenderer.prototype.render = function render(displayObject, renderTexture, clear, transform, skipUpdateTransform) {
+        var forceRender = arguments.length > 5 && arguments[5] !== undefined ? arguments[5] : false;
+
         if (!this.view) {
             return;
         }
@@ -35279,18 +35362,21 @@ var PXSceneRenderer = function (_SystemRenderer) {
         this.context = this.rootContext;
 
         if (renderTexture) {
-            // renderTexture = renderTexture.baseTexture || renderTexture;
-
             if (!renderTexture._pxsceneRenderTarget) {
                 renderTexture._pxsceneRenderTarget = new _PXSceneRenderTarget2.default(renderTexture.width, renderTexture.height, renderTexture.resolution);
                 renderTexture.source = null; // null for render target texture
                 renderTexture.valid = true;
             }
 
-            if (displayObject !== renderTexture._pxsceneRenderTarget.prevRenderedObject) {
+            // User specified clear
+            if (clear !== undefined) {
+                forceRender = true;
+            }
+
+            if (forceRender || displayObject !== renderTexture._pxsceneRenderTarget.prevRenderedObject) {
                 var child = renderTexture._pxsceneRenderTarget.children[0];
 
-                if (child) {
+                if (clear && child) {
                     renderTexture._pxsceneRenderTarget.clear();
                 }
                 // Render to texture (add it as child)
@@ -35467,8 +35553,6 @@ function _possibleConstructorReturn(self, call) { if (!self) { throw new Referen
 
 function _inherits(subClass, superClass) { if (typeof superClass !== "function" && superClass !== null) { throw new TypeError("Super expression must either be null or a function, not " + typeof superClass); } subClass.prototype = Object.create(superClass && superClass.prototype, { constructor: { value: subClass, enumerable: false, writable: true, configurable: true } }); if (superClass) Object.setPrototypeOf ? Object.setPrototypeOf(subClass, superClass) : subClass.__proto__ = superClass; }
 
-// import { Point } from '../../../math';
-
 /**
  * Creates a PXScene Render target of the given size.
  *
@@ -35508,6 +35592,11 @@ var PXSceneRenderTarget = function (_Container) {
 
 
     PXSceneRenderTarget.prototype.clear = function clear() {
+        if (this.renderedObject) {
+            this.renderedObject.removeAll();
+            this.renderedObject.remove();
+            this.renderedObject = null;
+        }
         this.destroyAllChildren(true);
     };
 
@@ -36359,6 +36448,26 @@ var WebGLRenderer = function (_SystemRenderer) {
 
     WebGLRenderer.prototype.setTransform = function setTransform(matrix) {
         this._activeRenderTarget.transform = matrix;
+    };
+
+    /**
+     * Erases the render texture and fills the drawing area with a colour
+     *
+     * @param {PIXI.RenderTexture} renderTexture - The render texture to clear
+     * @param {number} [clearColor] - The colour
+     * @return {PIXI.WebGLRenderer} Returns itself.
+     */
+
+
+    WebGLRenderer.prototype.clearRenderTexture = function clearRenderTexture(renderTexture, clearColor) {
+        var baseTexture = renderTexture.baseTexture;
+        var renderTarget = baseTexture._glRenderTargets[this.CONTEXT_UID];
+
+        if (renderTarget) {
+            renderTarget.clear(clearColor);
+        }
+
+        return this;
     };
 
     /**
@@ -39651,8 +39760,12 @@ var Sprite = function (_Container) {
         var height = void 0;
 
         if ((0, _utils.isV8)()) {
-            width = this.renderedObject.resource.w;
-            height = this.renderedObject.resource.h;
+            if (this.renderedObjectSprite) {
+                width = this.renderedObjectSprite.resource.w;
+                height = this.renderedObjectSprite.resource.h;
+            } else {
+                return false;
+            }
         } else {
             width = this._texture.orig.width;
             height = this._texture.orig.height;
@@ -39761,11 +39874,11 @@ var Sprite = function (_Container) {
 
 
     Sprite.prototype.updateAttr = function updateAttr() {
-        var renderedObject = this.renderedObject;
+        var renderedObjectSprite = this.renderedObjectSprite;
 
-        if (renderedObject) {
-            var spriteWidth = renderedObject.resource.w;
-            var spriteHeight = renderedObject.resource.h;
+        if (renderedObjectSprite) {
+            var spriteWidth = renderedObjectSprite.resource.w;
+            var spriteHeight = renderedObjectSprite.resource.h;
 
             if (!spriteWidth || !spriteHeight) {
                 return false;
@@ -40401,6 +40514,10 @@ var _RenderTexture2 = _interopRequireDefault(_RenderTexture);
 
 var _math = require('../../math');
 
+var _utils = require('../../utils');
+
+var _const = require('../../const');
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -40439,13 +40556,18 @@ var PXSceneSpriteRenderer = function () {
 
         var parentRenderedObject = sprite.parent && sprite.parent.renderedObject || this.renderer.context;
 
+        var defaultTint = 0xFFFFFF;
+
         if (texture instanceof _RenderTexture2.default) // render texture?
             {
                 if (texture._pxsceneRenderTarget) {
                     var pxsceneRendererTarget = texture._pxsceneRenderTarget;
 
-                    pxsceneRendererTarget.x = sprite.x;
-                    pxsceneRendererTarget.y = sprite.y;
+                    var cx = pxsceneRendererTarget.canvasWidth * sprite.anchor.x;
+                    var cy = pxsceneRendererTarget.canvasHeight * sprite.anchor.y;
+
+                    pxsceneRendererTarget.x = sprite.x - cx;
+                    pxsceneRendererTarget.y = sprite.y - cy;
                     pxsceneRendererTarget.parent = sprite.parent;
                     pxsceneRendererTarget.scale = sprite.scale;
                     pxsceneRendererTarget.renderPXScene(this.renderer);
@@ -40471,61 +40593,17 @@ var PXSceneSpriteRenderer = function () {
                 }
                 // Calculate all attributes
                 if (sprite.renderedObject) {
-                    var renderedObject = sprite.renderedObject;
-
-                    spriteWidth = maskRect.w;
-                    spriteHeight = maskRect.h;
-
-                    var attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
-
-                    renderedObject.x = attr.x;
-                    renderedObject.y = attr.y;
-                    renderedObject.cx = attr.cx;
-                    renderedObject.cy = attr.cy;
-                    renderedObject.a = attr.a;
-                    renderedObject.r = attr.r;
-                    renderedObject.sx = attr.sx;
-                    renderedObject.sy = attr.sy;
-                    renderedObject.w = spriteWidth;
-                    renderedObject.h = spriteHeight;
-
-                    var renderedObjectMask = sprite.renderedObjectMask;
-
-                    renderedObjectMask.w = spriteWidth;
-                    renderedObjectMask.h = spriteHeight;
-
-                    var renderedObjectSprite = sprite.renderedObjectSprite;
-
-                    renderedObjectSprite.x = -maskRect.x;
-                    renderedObjectSprite.y = -maskRect.y;
+                    innerRenderSpriteFrame.call(this, maskRect);
                 } else {
-                    var _attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
-
                     sprite.renderedObject = this.renderer.view.create({
                         t: 'rect',
                         parent: parentRenderedObject,
-                        x: _attr.x,
-                        y: _attr.y,
-                        cx: _attr.cx,
-                        cy: _attr.cy,
-                        a: _attr.a,
-                        r: _attr.r,
-                        sx: _attr.sx,
-                        sy: _attr.sy,
-                        w: maskRect.w,
-                        h: maskRect.h,
-                        fillColor: 0x0
+                        fillColor: 0
                     });
 
                     sprite.renderedObjectMask = this.renderer.view.create({
                         t: 'rect',
                         parent: sprite.renderedObject,
-                        x: 0,
-                        y: 0,
-                        cx: _attr.cx,
-                        cy: _attr.cy,
-                        w: maskRect.w,
-                        h: maskRect.h,
                         fillColor: 0xFFFF00FF,
                         mask: true,
                         draw: false
@@ -40534,26 +40612,69 @@ var PXSceneSpriteRenderer = function () {
                     sprite.renderedObjectSprite = this.renderer.view.create({
                         t: 'image',
                         parent: sprite.renderedObject,
-                        x: -maskRect.x,
-                        y: -maskRect.y,
-                        cx: _attr.cx,
-                        cy: _attr.cy,
                         url: texture.baseTexture.source.src
                     });
+
+                    if (sprite.tint !== defaultTint) {
+                        sprite.renderedObjectSpriteContainer = this.renderer.view.create({
+                            t: 'rect',
+                            parent: sprite.renderedObject,
+                            fillColor: 0
+                        });
+
+                        sprite.renderedObjectSprite.parent = sprite.renderedObjectSpriteContainer;
+                        sprite.renderedObjectSprite.mask = true;
+
+                        sprite.renderedObjectTint = this.renderer.view.create({
+                            t: 'rect',
+                            parent: sprite.renderedObjectSpriteContainer,
+                            fillColor: (0, _utils.hexrgb2rgba)(sprite.tint)
+                        });
+                    }
+
+                    innerRenderSpriteFrame.call(this, maskRect);
                 }
             } else if (!sprite.textureDirty && sprite.renderedObject) // noFrame
             {
                 innerRenderSprite.call(this);
             } else {
             if (sprite.renderedObject) {
+                sprite.renderedObject.removeAll();
                 sprite.renderedObject.remove();
+                sprite.renderedObject = null;
             }
 
             sprite.renderedObject = this.renderer.view.create({
-                t: 'image',
+                t: 'rect',
                 parent: parentRenderedObject,
-                url: texture.baseTexture.source.src
+                w: spriteWidth,
+                h: spriteHeight,
+                fillColor: 0x0
             });
+
+            if (PXSceneSpriteRenderer.resourcesMap[texture.baseTexture.source.src]) {
+                sprite.renderedObjectSprite = this.renderer.view.create({
+                    t: 'image',
+                    parent: sprite.renderedObject,
+                    resource: PXSceneSpriteRenderer.resourcesMap[texture.baseTexture.source.src],
+                    mask: sprite.tint !== defaultTint
+                });
+            } else {
+                sprite.renderedObjectSprite = this.renderer.view.create({
+                    t: 'image',
+                    parent: sprite.renderedObject,
+                    url: texture.baseTexture.source.src,
+                    mask: sprite.tint !== defaultTint
+                });
+            }
+
+            if (sprite.tint !== defaultTint) {
+                sprite.renderedObjectTint = this.renderer.view.create({
+                    t: 'rect',
+                    parent: sprite.renderedObject,
+                    fillColor: (0, _utils.hexrgb2rgba)(sprite.tint)
+                });
+            }
 
             innerRenderSprite.call(this);
         }
@@ -40562,9 +40683,15 @@ var PXSceneSpriteRenderer = function () {
             sprite.updateAttr();
 
             var renderedObject = sprite.renderedObject;
+            var renderedObjectSprite = sprite.renderedObjectSprite;
+            var renderedObjectTint = sprite.renderedObjectTint;
 
-            spriteWidth = renderedObject.resource.w;
-            spriteHeight = renderedObject.resource.h;
+            spriteWidth = renderedObjectSprite.resource.w;
+            spriteHeight = renderedObjectSprite.resource.h;
+
+            if (spriteWidth && spriteHeight) {
+                PXSceneSpriteRenderer.resourcesMap[texture.baseTexture.source.src] = renderedObjectSprite.resource;
+            }
 
             var attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
 
@@ -40576,7 +40703,185 @@ var PXSceneSpriteRenderer = function () {
             renderedObject.r = attr.r;
             renderedObject.sx = attr.sx;
             renderedObject.sy = attr.sy;
+            renderedObject.w = spriteWidth;
+            renderedObject.h = spriteHeight;
+
+            if (sprite.tint !== defaultTint) {
+                renderedObjectTint.w = spriteWidth;
+                renderedObjectTint.h = spriteHeight;
+                renderedObjectSprite.a = attr.a;
+            }
+
+            // alpha mask
+            if (sprite.mask) {
+                var spriteMaskRenderedObject = sprite.mask.renderedObject;
+
+                if (spriteMaskRenderedObject) {
+                    sprite.__backupMaskParent = spriteMaskRenderedObject.parent;
+                    sprite.__backupMaskAlpha = spriteMaskRenderedObject.a;
+                    sprite.__backupAlpha = renderedObject.a;
+
+                    if (!sprite.renderedObjectMaskContainer) {
+                        sprite.renderedObjectMaskContainer = this.renderer.view.create({
+                            t: 'rect',
+                            parent: renderedObject.parent,
+                            fillColor: 0
+                        });
+
+                        renderedObject.parent = sprite.renderedObjectMaskContainer;
+                        spriteMaskRenderedObject.parent = sprite.renderedObjectMaskContainer;
+                    }
+
+                    var renderedObjectMaskContainer = sprite.renderedObjectMaskContainer;
+
+                    renderedObjectMaskContainer.x = 0;
+                    renderedObjectMaskContainer.y = 0;
+                    renderedObjectMaskContainer.cx = attr.cx;
+                    renderedObjectMaskContainer.cy = attr.cy;
+                    renderedObjectMaskContainer.w = this.renderer.width;
+                    renderedObjectMaskContainer.h = this.renderer.height;
+
+                    spriteMaskRenderedObject.mask = true;
+                    spriteMaskRenderedObject.a = 0.5;
+                    renderedObject.a = 1;
+                }
+            } else {
+                var _renderedObjectMaskContainer = sprite.renderedObjectMaskContainer;
+
+                if (_renderedObjectMaskContainer) {
+                    var _spriteMaskRenderedObject = sprite.mask.renderedObject;
+
+                    renderedObject.parent = _renderedObjectMaskContainer.parent;
+                    renderedObject.a = sprite.__backupAlpha;
+
+                    _spriteMaskRenderedObject.parent = sprite.__backupMaskParent;
+                    _spriteMaskRenderedObject.a = sprite.__backupMaskAlpha;
+
+                    _renderedObjectMaskContainer.remove();
+
+                    sprite.__backupAlpha = undefined;
+                    sprite.__backupMaskParent = undefined;
+                    sprite.__backupMaskAlpha = undefined;
+                }
+            }
+
+            // (only support BLEND_MODES.ADD)
+            // A trick way, just set the alpha value.
+            if (sprite.blendMode === _const.BLEND_MODES.ADD) {
+                renderedObject.a = 0.5 * attr.a;
+                if (sprite.tint !== defaultTint) {
+                    renderedObjectSprite.a = 0.5 * attr.a;
+                }
+            }
         }
+
+        function innerRenderSpriteFrame(maskRect) {
+            sprite.updateAttr();
+
+            var renderedObject = sprite.renderedObject;
+            var renderedObjectMask = sprite.renderedObjectMask;
+            var renderedObjectSprite = sprite.renderedObjectSprite;
+            var renderedObjectSpriteContainer = sprite.renderedObjectSpriteContainer;
+            var renderedObjectTint = sprite.renderedObjectTint;
+
+            spriteWidth = maskRect.w;
+            spriteHeight = maskRect.h;
+
+            var attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
+
+            renderedObject.x = attr.x;
+            renderedObject.y = attr.y;
+            renderedObject.cx = attr.cx;
+            renderedObject.cy = attr.cy;
+            renderedObject.a = attr.a;
+            renderedObject.r = attr.r;
+            renderedObject.sx = attr.sx;
+            renderedObject.sy = attr.sy;
+            renderedObject.w = spriteWidth;
+            renderedObject.h = spriteHeight;
+
+            renderedObjectMask.x = 0;
+            renderedObjectMask.y = 0;
+            renderedObjectMask.cx = attr.cx;
+            renderedObjectMask.cy = attr.cy;
+            renderedObjectMask.w = spriteWidth;
+            renderedObjectMask.h = spriteHeight;
+
+            renderedObjectSprite.x = -maskRect.x;
+            renderedObjectSprite.y = -maskRect.y;
+            renderedObjectSprite.cx = attr.cx;
+            renderedObjectSprite.cy = attr.cy;
+
+            if (texture.rotate) {
+                var rotateParam = this._getRotationParamByRotate(texture.rotate);
+
+                if (rotateParam) {
+                    renderedObject.cx = spriteWidth * 0.5;
+                    renderedObject.cy = spriteHeight * 0.5;
+                    renderedObject.x = attr.x - attr.sx * renderedObject.cx;
+                    renderedObject.y = attr.y - attr.sy * renderedObject.cy;
+
+                    renderedObject.sx = attr.sx * rotateParam.sx;
+                    renderedObject.sy = attr.sy * rotateParam.sy;
+                    renderedObject.r = attr.r + rotateParam.r;
+                }
+            }
+
+            if (sprite.tint !== defaultTint) {
+                renderedObjectSpriteContainer.x = 0;
+                renderedObjectSpriteContainer.y = 0;
+                renderedObjectSpriteContainer.cx = attr.cx;
+                renderedObjectSpriteContainer.cy = attr.cy;
+                renderedObjectSpriteContainer.w = spriteWidth;
+                renderedObjectSpriteContainer.h = spriteHeight;
+
+                renderedObjectTint.x = -maskRect.x;
+                renderedObjectTint.y = -maskRect.y;
+                renderedObjectTint.cx = attr.cx;
+                renderedObjectTint.cy = attr.cy;
+                renderedObjectTint.w = spriteWidth;
+                renderedObjectTint.h = spriteHeight;
+
+                renderedObjectSprite.a = attr.a;
+            }
+        }
+    };
+
+    /**
+     * Calculate rotation param by rotate (from texture packer)
+     *
+     * @param {Number} rotation - Rotation (from texture packer)
+     * @returns {Object|null} Rotation param
+     * @private
+     */
+
+
+    PXSceneSpriteRenderer.prototype._getRotationParamByRotate = function _getRotationParamByRotate(rotation) {
+        if (rotation % 2 !== 0) {
+            // Not supported yet, don't rotate
+            return null;
+        }
+
+        var flip = false;
+
+        if (rotation >= 8) {
+            rotation -= 8;
+            flip = true;
+        }
+
+        if (rotation === 2) {
+            rotation = 6;
+        } else if (rotation === 6) {
+            rotation = 2;
+        }
+
+        var degree = rotation * 45;
+
+        return {
+            r: degree,
+            sx: flip ? -1 : 1,
+            sy: 1
+        };
     };
 
     /**
@@ -40626,12 +40931,23 @@ var PXSceneSpriteRenderer = function () {
     return PXSceneSpriteRenderer;
 }();
 
-exports.default = PXSceneSpriteRenderer;
+// Key: rotation method of texture packer
+// Value: rotation degree
 
+
+exports.default = PXSceneSpriteRenderer;
+PXSceneSpriteRenderer.rotationDegreeMap = {
+    0: 0,
+    2: 270,
+    4: 180,
+    6: 90
+};
+
+PXSceneSpriteRenderer.resourcesMap = {};
 
 _PXSceneRenderer2.default.registerPlugin('sprite', PXSceneSpriteRenderer);
 
-},{"../../math":73,"../../renderers/pxscene/PXSceneRenderer":85,"../../textures/RenderTexture":121}],111:[function(require,module,exports){
+},{"../../const":47,"../../math":73,"../../renderers/pxscene/PXSceneRenderer":85,"../../textures/RenderTexture":121,"../../utils":131}],111:[function(require,module,exports){
 "use strict";
 
 exports.__esModule = true;
@@ -41814,6 +42130,8 @@ var _TextStyle = require('./TextStyle');
 
 var _TextStyle2 = _interopRequireDefault(_TextStyle);
 
+var _math = require('../math');
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -41871,6 +42189,17 @@ var TextV8 = function (_Container) {
         var _this = _possibleConstructorReturn(this, _Container.call(this));
 
         _this._text = null;
+
+        /**
+         * The anchor sets the origin point of the texture.
+         * The default is 0,0 this means the texture's origin is the top left
+         * Setting the anchor to 0.5,0.5 means the texture's origin is centered
+         * Setting the anchor to 1,1 would mean the texture's origin point will be the bottom right corner
+         *
+         * @member {PIXI.Point}
+         * @private
+         */
+        _this._anchor = new _math.Point();
 
         /**
          * Private tracker for the current style.
@@ -41974,6 +42303,8 @@ var TextV8 = function (_Container) {
         }
 
         options = Object.assign({}, defaultDestroyOptions, options);
+
+        this._anchor = null;
 
         _Container.prototype.destroy.call(this, options);
 
@@ -42079,6 +42410,16 @@ var TextV8 = function (_Container) {
         return TextV8.fontResourceCache[fontFamilyKey];
     };
 
+    /**
+     * The anchor sets the origin point of the texture.
+     * The default is 0,0 this means the texture's origin is the top left
+     * Setting the anchor to 0.5,0.5 means the texture's origin is centered
+     * Setting the anchor to 1,1 would mean the texture's origin point will be the bottom right corner
+     *
+     * @member {PIXI.ObservablePoint}
+     */
+
+
     _createClass(TextV8, [{
         key: 'width',
         get: function get() {
@@ -42174,6 +42515,15 @@ var TextV8 = function (_Container) {
             this._text = text;
             this.dirty = true;
         }
+    }, {
+        key: 'anchor',
+        get: function get() {
+            return this._anchor;
+        },
+        set: function set(value) // eslint-disable-line require-jsdoc
+        {
+            this._anchor.copy(value);
+        }
     }]);
 
     return TextV8;
@@ -42184,7 +42534,7 @@ exports.default = TextV8;
 
 TextV8.fontResourceCache = {};
 
-},{"../display/Container":49,"../utils":131,"./TextStyle":115}],117:[function(require,module,exports){
+},{"../display/Container":49,"../math":73,"../utils":131,"./TextStyle":115}],117:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -43127,11 +43477,13 @@ var PXSceneTextRenderer = function () {
         var point = new _math.Point(text.x, text.y);
         var globalPoint = text.parent.toGlobal(point);
 
+        var textMeasure = fontResource.measureText(font.fontSize, text.text);
+
         // Calculate all attributes
         if (text.renderedObject) {
             var renderedObject = text.renderedObject;
 
-            var attr = this._calcTextAttributes(globalPoint, text);
+            var attr = this._calcTextAttributes(globalPoint, text, textMeasure);
 
             renderedObject.x = attr.x;
             renderedObject.y = attr.y;
@@ -43142,12 +43494,14 @@ var PXSceneTextRenderer = function () {
             renderedObject.sx = attr.sx;
             renderedObject.sy = attr.sy;
         } else {
-            var _attr = this._calcTextAttributes(globalPoint, text);
+            var _attr = this._calcTextAttributes(globalPoint, text, textMeasure);
+
+            var parentRenderedObject = text.parent && text.parent.renderedObject || this.renderer.context;
 
             // Create a container first
             text.renderedObject = this.renderer.view.create({
                 t: 'rect',
-                parent: this.renderer.context,
+                parent: parentRenderedObject,
                 x: _attr.x,
                 y: _attr.y,
                 cx: _attr.cx,
@@ -43186,8 +43540,6 @@ var PXSceneTextRenderer = function () {
             createTextStyle.y = 0;
             text.renderedObjectText = this.renderer.view.create(createTextStyle);
 
-            var textMeasure = fontResource.measureText(font.fontSize, text.text);
-
             text.renderedObject.w = textMeasure.w;
             text.renderedObject.h = textMeasure.h;
         }
@@ -43218,16 +43570,17 @@ var PXSceneTextRenderer = function () {
      *
      * @param {Point} globalPoint - Global Point of the text
      * @param {TextV8} text - TextV8 object.
+     * @param {Object} textMeasure - The measurement of the text with specific font and size.
      * @return {Object} The calculated attributes.
      * @private
      */
 
 
-    PXSceneTextRenderer.prototype._calcTextAttributes = function _calcTextAttributes(globalPoint, text) {
-        var x = globalPoint.x;
-        var y = globalPoint.y;
-        var cx = 0;
-        var cy = 0;
+    PXSceneTextRenderer.prototype._calcTextAttributes = function _calcTextAttributes(globalPoint, text, textMeasure) {
+        var cx = textMeasure.w * text.anchor.x;
+        var cy = textMeasure.h * text.anchor.y;
+        var x = globalPoint.x - cx;
+        var y = globalPoint.y - cy;
         var a = 1;
         var worldTransform = {
             skew: {},
@@ -43441,8 +43794,6 @@ exports.default = BaseRenderTexture;
 'use strict';
 
 exports.__esModule = true;
-
-var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
 
 var _utils = require('../utils');
 
@@ -43739,8 +44090,6 @@ var BaseTexture = function (_EventEmitter) {
 
 
     BaseTexture.prototype.loadSource = function loadSource(source) {
-        var _this2 = this;
-
         var wasLoading = this.isLoading;
 
         this.hasLoaded = false;
@@ -43770,80 +44119,74 @@ var BaseTexture = function (_EventEmitter) {
                 this.emit('loaded', this);
             }
         } else if (!source.getContext) {
-            var _ret = function () {
-                // Image fail / not ready
-                _this2.isLoading = true;
+            // Image fail / not ready
+            this.isLoading = true;
 
-                var scope = _this2;
+            var scope = this;
 
-                source.onload = function () {
-                    scope._updateImageType();
-                    source.onload = null;
-                    source.onerror = null;
+            source.onload = function () {
+                scope._updateImageType();
+                source.onload = null;
+                source.onerror = null;
 
-                    if (!scope.isLoading) {
-                        return;
-                    }
-
-                    scope.isLoading = false;
-                    scope._sourceLoaded();
-
-                    if (scope.imageType === 'svg') {
-                        scope._loadSvgSource();
-
-                        return;
-                    }
-
-                    scope.emit('loaded', scope);
-                };
-
-                source.onerror = function () {
-                    source.onload = null;
-                    source.onerror = null;
-
-                    if (!scope.isLoading) {
-                        return;
-                    }
-
-                    scope.isLoading = false;
-                    scope.emit('error', scope);
-                };
-
-                // Per http://www.w3.org/TR/html5/embedded-content-0.html#the-img-element
-                //   "The value of `complete` can thus change while a script is executing."
-                // So complete needs to be re-checked after the callbacks have been added..
-                // NOTE: complete will be true if the image has no src so best to check if the src is set.
-                if (source.complete && source.src) {
-                    // ..and if we're complete now, no need for callbacks
-                    source.onload = null;
-                    source.onerror = null;
-
-                    if (scope.imageType === 'svg') {
-                        scope._loadSvgSource();
-
-                        return {
-                            v: void 0
-                        };
-                    }
-
-                    _this2.isLoading = false;
-
-                    if (source.width && source.height) {
-                        _this2._sourceLoaded();
-
-                        // If any previous subscribers possible
-                        if (wasLoading) {
-                            _this2.emit('loaded', _this2);
-                        }
-                    }
-                    // If any previous subscribers possible
-                    else if (wasLoading) {
-                            _this2.emit('error', _this2);
-                        }
+                if (!scope.isLoading) {
+                    return;
                 }
-            }();
 
-            if ((typeof _ret === 'undefined' ? 'undefined' : _typeof(_ret)) === "object") return _ret.v;
+                scope.isLoading = false;
+                scope._sourceLoaded();
+
+                if (scope.imageType === 'svg') {
+                    scope._loadSvgSource();
+
+                    return;
+                }
+
+                scope.emit('loaded', scope);
+            };
+
+            source.onerror = function () {
+                source.onload = null;
+                source.onerror = null;
+
+                if (!scope.isLoading) {
+                    return;
+                }
+
+                scope.isLoading = false;
+                scope.emit('error', scope);
+            };
+
+            // Per http://www.w3.org/TR/html5/embedded-content-0.html#the-img-element
+            //   "The value of `complete` can thus change while a script is executing."
+            // So complete needs to be re-checked after the callbacks have been added..
+            // NOTE: complete will be true if the image has no src so best to check if the src is set.
+            if (source.complete && source.src) {
+                // ..and if we're complete now, no need for callbacks
+                source.onload = null;
+                source.onerror = null;
+
+                if (scope.imageType === 'svg') {
+                    scope._loadSvgSource();
+
+                    return;
+                }
+
+                this.isLoading = false;
+
+                if (source.width && source.height) {
+                    this._sourceLoaded();
+
+                    // If any previous subscribers possible
+                    if (wasLoading) {
+                        this.emit('loaded', this);
+                    }
+                }
+                // If any previous subscribers possible
+                else if (wasLoading) {
+                        this.emit('error', this);
+                    }
+            }
         }
     };
 
@@ -43930,7 +44273,7 @@ var BaseTexture = function (_EventEmitter) {
 
 
     BaseTexture.prototype._loadSvgSourceUsingXhr = function _loadSvgSourceUsingXhr() {
-        var _this3 = this;
+        var _this2 = this;
 
         var svgXhr = new XMLHttpRequest();
 
@@ -43946,11 +44289,11 @@ var BaseTexture = function (_EventEmitter) {
                 throw new Error('Failed to load SVG using XHR.');
             }
 
-            _this3._loadSvgSourceUsingString(svgXhr.response);
+            _this2._loadSvgSourceUsingString(svgXhr.response);
         };
 
         svgXhr.onerror = function () {
-            return _this3.emit('error', _this3);
+            return _this2.emit('error', _this2);
         };
 
         svgXhr.open('GET', this.imageUrl, true);
@@ -45616,60 +45959,56 @@ var cancelAnimationFrame = void 0;
 
 // Define some global functions
 if ((0, _utils.isV8)()) {
-    (function () {
-        // Date.now
-        if (!(Date.now && Date.prototype.getTime)) {
-            Date.now = function now() {
-                return new Date().getTime();
-            };
+    // Date.now
+    if (!(Date.now && Date.prototype.getTime)) {
+        Date.now = function now() {
+            return new Date().getTime();
+        };
+    }
+
+    // performance.now
+    if (!(performance && performance.now)) {
+        var startTime = Date.now();
+
+        if (!performance) {
+            performance = {};
         }
 
-        // performance.now
-        if (!(performance && performance.now)) {
-            (function () {
-                var startTime = Date.now();
+        performance.now = function () {
+            return Date.now() - startTime;
+        };
+    }
 
-                if (!performance) {
-                    performance = {};
-                }
+    // requestAnimationFrame
+    var lastTime = Date.now();
 
-                performance.now = function () {
-                    return Date.now() - startTime;
-                };
-            })();
-        }
+    if (!requestAnimationFrame) {
+        requestAnimationFrame = function requestAnimationFrame(callback) {
+            if (typeof callback !== 'function') {
+                throw new TypeError(callback + 'is not a function');
+            }
 
-        // requestAnimationFrame
-        var lastTime = Date.now();
+            var currentTime = Date.now();
+            var delay = ONE_FRAME_TIME + lastTime - currentTime;
 
-        if (!requestAnimationFrame) {
-            requestAnimationFrame = function requestAnimationFrame(callback) {
-                if (typeof callback !== 'function') {
-                    throw new TypeError(callback + 'is not a function');
-                }
+            if (delay < 0) {
+                delay = 0;
+            }
 
-                var currentTime = Date.now();
-                var delay = ONE_FRAME_TIME + lastTime - currentTime;
+            lastTime = currentTime;
 
-                if (delay < 0) {
-                    delay = 0;
-                }
+            return setTimeout(function () {
+                lastTime = Date.now();
+                callback(performance.now());
+            }, delay);
+        };
+    }
 
-                lastTime = currentTime;
-
-                return setTimeout(function () {
-                    lastTime = Date.now();
-                    callback(performance.now());
-                }, delay);
-            };
-        }
-
-        if (!cancelAnimationFrame) {
-            cancelAnimationFrame = function cancelAnimationFrame(id) {
-                return clearInterval(id);
-            };
-        }
-    })();
+    if (!cancelAnimationFrame) {
+        cancelAnimationFrame = function cancelAnimationFrame(id) {
+            return clearInterval(id);
+        };
+    }
 } else {
     performance = window.performance;
     requestAnimationFrame = window.requestAnimationFrame;
@@ -46231,6 +46570,7 @@ exports.string2hexV8 = string2hexV8;
 exports.rgb2hex = rgb2hex;
 exports.rgba2hex = rgba2hex;
 exports.rgb2rgba = rgb2rgba;
+exports.hexrgb2rgba = hexrgb2rgba;
 exports.getResolutionOfUrl = getResolutionOfUrl;
 exports.decomposeDataUri = decomposeDataUri;
 exports.getUrlFileExtension = getUrlFileExtension;
@@ -46352,6 +46692,8 @@ function string2hexV8(str) {
         return 0x00FF00FF;
     } else if (str === 'blue') {
         return 0x00FF00FF;
+    } else if (str === 'white') {
+        return 0xFFFFFFFF;
     }
 
     // By default it is black.
@@ -46392,6 +46734,29 @@ function rgba2hex(rgba) {
  */
 function rgb2rgba(rgb) {
     return [rgb[0], rgb[1], rgb[2], 0];
+}
+
+/**
+ * Converts a hex color as RRGGBB to RRGGBBAA
+ *
+ * @memberof PIXI.utils
+ * @function hexrgb2rgba
+ * @param {number} rgb - a hex color in rgb
+ * @return {number} a hex color in rgba
+ */
+function hexrgb2rgba(rgb) {
+    var b = rgb & 0xFF;
+    var g = rgb >> 8 & 0xFF;
+    var r = rgb >> 16 & 0xFF;
+
+    var min = Math.min(r, g, b);
+    var a = 255 - min;
+
+    b = (b - min) * 255 / a;
+    g = (g - min) * 255 / a;
+    r = (r - min) * 255 / a;
+
+    return r << 24 | g << 16 | b << 8 | a;
 }
 
 /**
@@ -48797,6 +49162,12 @@ var _core = require('../core');
 
 var core = _interopRequireWildcard(_core);
 
+var _utils = require('../core/utils');
+
+var _lodash = require('lodash');
+
+var _ = _interopRequireWildcard(_lodash);
+
 function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -48824,6 +49195,7 @@ function CacheData() {
 
     this.originalRenderWebGL = null;
     this.originalRenderCanvas = null;
+    this.originalRenderPXScene = null;
     this.originalCalculateBounds = null;
     this.originalGetLocalBounds = null;
 
@@ -48870,6 +49242,7 @@ Object.defineProperties(DisplayObject.prototype, {
 
                 data.originalRenderWebGL = this.renderWebGL;
                 data.originalRenderCanvas = this.renderCanvas;
+                data.originalRenderPXScene = this.renderPXScene;
 
                 data.originalUpdateTransform = this.updateTransform;
                 data.originalCalculateBounds = this._calculateBounds;
@@ -48884,17 +49257,23 @@ Object.defineProperties(DisplayObject.prototype, {
 
                 this.renderWebGL = this._renderCachedWebGL;
                 this.renderCanvas = this._renderCachedCanvas;
+                this.renderPXScene = this._renderCachedPXScene;
 
                 this.destroy = this._cacheAsBitmapDestroy;
             } else {
                 data = this._cacheData;
 
                 if (data.sprite) {
-                    this._destroyCachedDisplayObject();
+                    if ((0, _utils.isV8)()) {
+                        data.sprite = null;
+                    } else {
+                        this._destroyCachedDisplayObject();
+                    }
                 }
 
                 this.renderWebGL = data.originalRenderWebGL;
                 this.renderCanvas = data.originalRenderCanvas;
+                this.renderPXScene = data.originalRenderPXScene;
                 this._calculateBounds = data.originalCalculateBounds;
                 this.getLocalBounds = data.originalGetLocalBounds;
 
@@ -48905,6 +49284,10 @@ Object.defineProperties(DisplayObject.prototype, {
 
                 this._mask = data.originalMask;
                 this.filterArea = data.originalFilterArea;
+
+                if ((0, _utils.isV8)()) {
+                    this.enablePaintingForChildren(true);
+                }
             }
         }
     }
@@ -49107,6 +49490,51 @@ DisplayObject.prototype._initCachedDisplayObjectCanvas = function _initCachedDis
 };
 
 /**
+ * Renders a cached version of the sprite with PXScene
+ *
+ * @private
+ * @memberof PIXI.DisplayObject#
+ * @param {PIXI.WebGLRenderer} renderer - the WebGL renderer
+ */
+DisplayObject.prototype._renderCachedPXScene = function _renderCachedPXScene(renderer) {
+    if (!this.visible || this.worldAlpha <= 0 || !this.renderable) {
+        return;
+    }
+
+    // No need to create a new render texture for now, just
+    // stop painting for each child
+    this._cacheData.sprite = this;
+
+    this.enablePaintingForChildren.call(this._cacheData.sprite, false);
+
+    this._cacheData.originalRenderPXScene.call(this._cacheData.sprite, renderer);
+};
+
+DisplayObject.prototype.enablePaintingForChildren = function enablePaintingForChildren(enabled) {
+    for (var i = 0, j = this.children.length; i < j; ++i) {
+        var child = this.children[i];
+
+        if (!enabled) {
+            if (!child.__hasBackup) {
+                child.__backupScale = _.cloneDeep(child.scale);
+                child.__backupPosition = _.cloneDeep(child.position);
+                child.__backupRotation = child.rotation;
+                child.__backupAlpha = child.alpha;
+
+                child.__hasBackup = true;
+            }
+
+            child.scale = child.__backupScale;
+            child.position = child.__backupPosition;
+            child.rotation = child.__backupRotation;
+            child.alpha = child.__backupAlpha;
+        } else {
+            child.__hasBackup = false;
+        }
+    }
+};
+
+/**
  * Calculates the bounds of the cached sprite
  *
  * @private
@@ -49145,7 +49573,7 @@ DisplayObject.prototype._cacheAsBitmapDestroy = function _cacheAsBitmapDestroy()
     this.destroy();
 };
 
-},{"../core":68}],144:[function(require,module,exports){
+},{"../core":68,"../core/utils":131,"lodash":6}],144:[function(require,module,exports){
 'use strict';
 
 var _core = require('../core');
@@ -56477,6 +56905,10 @@ var _core = require('../core');
 
 var core = _interopRequireWildcard(_core);
 
+var _lodash = require('lodash');
+
+var _ = _interopRequireWildcard(_lodash);
+
 function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } else { var newObj = {}; if (obj != null) { for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key]; } } newObj.default = obj; return newObj; } }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -56672,6 +57104,106 @@ var ParticleContainer = function (_core$Container) {
     };
 
     /**
+     * Adds one or more children to the container.
+     *
+     * Multiple items can be added like so: `myContainer.addChild(thingOne, thingTwo, thingThree)`
+     *
+     * @param {...PIXI.DisplayObject} child - The DisplayObject(s) to add to the container
+     * @return {PIXI.DisplayObject} The first child that was added.
+     */
+
+
+    ParticleContainer.prototype.addChild = function addChild(child) {
+        var addedChild = _core$Container.prototype.addChild.call(this, child);
+
+        // Remember the initial x, y when it adds to the particle container.
+        addedChild.__initPosition = _.cloneDeep(addedChild.position);
+
+        return addedChild;
+    };
+
+    /**
+     * Renders the object using the PXScene renderer
+     *
+     * @param {PIXI.PXSceneRenderer} renderer - The renderer
+     */
+
+
+    ParticleContainer.prototype.renderPXScene = function renderPXScene(renderer) {
+        // if not visible or the alpha is 0 then no need to render this
+        if (!this.visible || this.worldAlpha <= 0 || !this.renderable) {
+            return;
+        }
+
+        this._renderPXScene(renderer);
+
+        // Set children's properties based on the properties
+        for (var i = 0, j = this.children.length; i < j; ++i) {
+            var child = this.children[i];
+
+            // 1. Backup original properties
+            // Reset tint color, it seems tint doesn't work
+            child.__backupTint = child.tint;
+            child.tint = 0xFFFFFF;
+
+            // scale
+            if (!this._properties[0]) {
+                child.__backupScale = _.cloneDeep(child.scale);
+                child.scale.set(1);
+            }
+
+            // position
+            if (!this._properties[1]) {
+                child.__backupPosition = _.cloneDeep(child.position);
+                child.position = child.__initPosition;
+            }
+
+            // rotation
+            if (!this._properties[2]) {
+                child.__backupRotation = child.rotation;
+                child.rotation = 0;
+            }
+
+            // uvs (pxscene doesn't support it, ignore)
+
+            // alpha
+            if (!this._properties[4]) {
+                child.__backupAlpha = child.alpha;
+                child.alpha = 1;
+            }
+
+            // 2. Render
+            child.renderPXScene(renderer);
+
+            // 3. Restore
+            // Restore tint color
+            child.tint = child.__backupTint;
+
+            // scale
+            if (!this._properties[0]) {
+                child.scale = child.__backupScale;
+            }
+
+            // position
+            if (!this._properties[1]) {
+                child.position = child.__backupPosition;
+            }
+
+            // rotation
+            if (!this._properties[2]) {
+                child.rotation = child.__backupRotation;
+            }
+
+            // uvs (pxscene doesn't support it, ignore)
+
+            // alpha
+            if (!this._properties[4]) {
+                child.alpha = child.__backupAlpha;
+            }
+        }
+    };
+
+    /**
      * Set the flag that static data should be updated to true
      *
      * @private
@@ -56804,7 +57336,7 @@ var ParticleContainer = function (_core$Container) {
 
 exports.default = ParticleContainer;
 
-},{"../core":68}],182:[function(require,module,exports){
+},{"../core":68,"lodash":6}],182:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -57644,17 +58176,15 @@ if (!(Date.now && Date.prototype.getTime)) {
 
 // performance.now
 if (!(global.performance && global.performance.now)) {
-    (function () {
-        var startTime = Date.now();
+    var startTime = Date.now();
 
-        if (!global.performance) {
-            global.performance = {};
-        }
+    if (!global.performance) {
+        global.performance = {};
+    }
 
-        global.performance.now = function () {
-            return Date.now() - startTime;
-        };
-    })();
+    global.performance.now = function () {
+        return Date.now() - startTime;
+    };
 }
 
 // requestAnimationFrame

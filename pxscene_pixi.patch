@@ -46,10 +46,25 @@ index f9235e4c..4d29a35d 100644
  
  /**
 diff --git a/src/core/display/Container.js b/src/core/display/Container.js
-index ed8cd5f3..e063988c 100644
+index ed8cd5f3..74261066 100644
 --- a/src/core/display/Container.js
 +++ b/src/core/display/Container.js
-@@ -500,6 +500,17 @@ export default class Container extends DisplayObject
+@@ -317,10 +317,10 @@ export default class Container extends DisplayObject
+     {
+         this._boundsID++;
+ 
+-        this.transform.updateTransform(this.parent.transform);
+-
+-        // TODO: check render flags, how to process stuff here
+-        this.worldAlpha = this.alpha * this.parent.worldAlpha;
++        if (this.parent)
++        {
++            this.transform.updateTransform(this.parent.transform);
++        }
+ 
+         for (let i = 0, j = this.children.length; i < j; ++i)
+         {
+@@ -500,6 +500,38 @@ export default class Container extends DisplayObject
      }
  
      /**
@@ -61,13 +76,34 @@ index ed8cd5f3..e063988c 100644
 +    _renderPXScene(renderer) // eslint-disable-line no-unused-vars
 +    {
 +        // this is where content itself gets rendered...
++        if (!this.renderedObject)
++        {
++            const parentRenderedObject = (this.parent && this.parent.renderedObject) || renderer.context;
++
++            this.renderedObject = renderer.view.create({
++                t: 'rect',
++                parent: parentRenderedObject,
++                clip: false,
++                fillColor: 0,
++            });
++        }
++
++        const renderedObject = this.renderedObject;
++
++        renderedObject.cx = this.pivot.x;
++        renderedObject.cy = this.pivot.y;
++        renderedObject.x = (this.x - renderedObject.cx);
++        renderedObject.y = (this.y - renderedObject.cy);
++        renderedObject.w = this.width;
++        renderedObject.h = this.height;
++        renderedObject.r = this.rotation * (180 / Math.PI);
 +    }
 +
 +    /**
       * Renders the object using the Canvas renderer
       *
       * @param {PIXI.CanvasRenderer} renderer - The renderer
-@@ -530,6 +541,26 @@ export default class Container extends DisplayObject
+@@ -530,6 +562,26 @@ export default class Container extends DisplayObject
      }
  
      /**
@@ -94,6 +130,62 @@ index ed8cd5f3..e063988c 100644
       * Removes all internal references and listeners as well as removes children from the display list.
       * Do not use a Container after calling `destroy`.
       *
+@@ -546,6 +598,23 @@ export default class Container extends DisplayObject
+     {
+         super.destroy();
+ 
++        this.destroyAllChildren(options);
++    }
++
++    /**
++     * Removes children from the display list.
++     *
++     * @param {object|boolean} [options] - Options parameter. A boolean will act as if all options
++     *  have been set to that value
++     * @param {boolean} [options.children=false] - if set to true, all the children will have their destroy
++     *  method called as well. 'options' will be passed on to those calls.
++     * @param {boolean} [options.texture=false] - Only used for child Sprites if options.children is set to true
++     *  Should it destroy the texture of the child sprite
++     * @param {boolean} [options.baseTexture=false] - Only used for child Sprites if options.children is set to true
++     *  Should it destroy the base texture of the child sprite
++     */
++    destroyAllChildren(options)
++    {
+         const destroyChildren = typeof options === 'boolean' ? options : options && options.children;
+ 
+         const oldChildren = this.removeChildren(0, this.children.length);
+@@ -566,7 +635,14 @@ export default class Container extends DisplayObject
+      */
+     get width()
+     {
+-        return this.scale.x * this.getLocalBounds().width;
++        const width = this.getLocalBounds().width;
++
++        if (width !== 0)
++        {
++            return this.scale.x * width;
++        }
++
++        return this._width;
+     }
+ 
+     set width(value) // eslint-disable-line require-jsdoc
+@@ -592,7 +668,14 @@ export default class Container extends DisplayObject
+      */
+     get height()
+     {
+-        return this.scale.y * this.getLocalBounds().height;
++        const height = this.getLocalBounds().height;
++
++        if (height !== 0)
++        {
++            return this.scale.y * height;
++        }
++
++        return this._height;
+     }
+ 
+     set height(value) // eslint-disable-line require-jsdoc
 diff --git a/src/core/display/DisplayObject.js b/src/core/display/DisplayObject.js
 index 4e6c77d0..d49d1517 100644
 --- a/src/core/display/DisplayObject.js
@@ -115,8 +207,1458 @@ index 4e6c77d0..d49d1517 100644
       * Set the parent Container of this DisplayObject
       *
       * @param {PIXI.Container} container - The Container to add this DisplayObject to
+diff --git a/src/core/graphics/GraphicsV8.js b/src/core/graphics/GraphicsV8.js
+new file mode 100644
+index 00000000..b409c298
+--- /dev/null
++++ b/src/core/graphics/GraphicsV8.js
+@@ -0,0 +1,1040 @@
++import Container from '../display/Container';
++import GraphicsData from './GraphicsData';
++import { Point, Rectangle, RoundedRectangle, Ellipse, Polygon, Circle } from '../math';
++import { SHAPES, BLEND_MODES } from '../const';
++import Bounds from '../display/Bounds';
++import bezierCurveTo from './utils/bezierCurveTo';
++
++const tempPoint = new Point();
++
++/**
++ * The Graphics class contains methods used to draw primitive shapes such as lines, circles and
++ * rectangles to the display, and to color and fill them.
++ *
++ * @class
++ * @extends PIXI.Container
++ * @memberof PIXI
++ */
++export default class GraphicsV8 extends Container
++{
++    /**
++     * Constructor
++     */
++    constructor()
++    {
++        super();
++
++        // Native lines default to fault
++        this.nativeLines = false;
++
++        /**
++         * The alpha value used when filling the Graphics object.
++         *
++         * @member {number}
++         * @default 1
++         */
++        this.fillAlpha = 1;
++
++        /**
++         * The width (thickness) of any lines drawn.
++         *
++         * @member {number}
++         * @default 0
++         */
++        this.lineWidth = 0;
++
++        /**
++         * The color of any lines drawn.
++         *
++         * @member {string}
++         * @default 0
++         */
++        this.lineColor = 0;
++
++        /**
++         * Graphics data
++         *
++         * @member {PIXI.GraphicsData[]}
++         * @private
++         */
++        this.graphicsData = [];
++
++        /**
++         * The tint applied to the graphic shape. This is a hex value. Apply a value of 0xFFFFFF to
++         * reset the tint.
++         *
++         * @member {number}
++         * @default 0xFFFFFF
++         */
++        this.tint = 0xFFFFFF;
++
++        /**
++         * The previous tint applied to the graphic shape. Used to compare to the current tint and
++         * check if theres change.
++         *
++         * @member {number}
++         * @private
++         * @default 0xFFFFFF
++         */
++        this._prevTint = 0xFFFFFF;
++
++        /**
++         * The blend mode to be applied to the graphic shape. Apply a value of
++         * `PIXI.BLEND_MODES.NORMAL` to reset the blend mode.
++         *
++         * @member {number}
++         * @default PIXI.BLEND_MODES.NORMAL;
++         * @see PIXI.BLEND_MODES
++         */
++        this.blendMode = BLEND_MODES.NORMAL;
++
++        /**
++         * Current path
++         *
++         * @member {PIXI.GraphicsData}
++         * @private
++         */
++        this.currentPath = null;
++
++        /**
++         * Whether this shape is being used as a mask.
++         *
++         * @member {boolean}
++         */
++        this.isMask = false;
++
++        /**
++         * The bounds' padding used for bounds calculation.
++         *
++         * @member {number}
++         */
++        this.boundsPadding = 0;
++
++        /**
++         * A cache of the local bounds to prevent recalculation.
++         *
++         * @member {PIXI.Rectangle}
++         * @private
++         */
++        this._localBounds = new Bounds();
++
++        /**
++         * Used to detect if the graphics object has changed. If this is set to true then the graphics
++         * object will be recalculated.
++         *
++         * @member {boolean}
++         * @private
++         */
++        this.dirty = 0;
++
++        /**
++         * Used to detect if we need to do a fast rect check using the id compare method
++         * @type {Number}
++         */
++        this.fastRectDirty = -1;
++
++        /**
++         * Used to detect if we clear the graphics webGL data
++         * @type {Number}
++         */
++        this.clearDirty = 0;
++
++        /**
++         * Used to detect if we we need to recalculate local bounds
++         * @type {Number}
++         */
++        this.boundsDirty = -1;
++
++        /**
++         * Used to detect if the cached sprite object needs to be updated.
++         *
++         * @member {boolean}
++         * @private
++         */
++        this.cachedSpriteDirty = false;
++
++        this._spriteRect = null;
++        this._fastRect = false;
++
++        /**
++         * When cacheAsBitmap is set to true the graphics object will be rendered as if it was a sprite.
++         * This is useful if your graphics element does not change often, as it will speed up the rendering
++         * of the object in exchange for taking up texture memory. It is also useful if you need the graphics
++         * object to be anti-aliased, because it will be rendered using canvas. This is not recommended if
++         * you are constantly redrawing the graphics element.
++         *
++         * @name cacheAsBitmap
++         * @member {boolean}
++         * @memberof PIXI.Graphics#
++         * @default false
++         */
++
++        /**
++         * Plugin that is responsible for rendering this element.
++         * Allows to customize the rendering process without overriding '_renderWebGL' & '_renderCanvas' methods.
++         *
++         * @member {string}
++         * @default 'TextV8'
++         */
++        this.pluginName = 'graphicsV8';
++
++        // Cached objects for clearing.
++        this.renderedObjects = [];
++    }
++
++    /**
++     * Creates a new Graphics object with the same values as this one.
++     * Note that the only the properties of the object are cloned, not its transform (position,scale,etc)
++     *
++     * @return {PIXI.Graphics} A clone of the graphics object
++     */
++    clone()
++    {
++        const clone = new GraphicsV8();
++
++        clone.renderable = this.renderable;
++        clone.fillAlpha = this.fillAlpha;
++        clone.lineWidth = this.lineWidth;
++        clone.lineColor = this.lineColor;
++        clone.tint = this.tint;
++        clone.blendMode = this.blendMode;
++        clone.isMask = this.isMask;
++        clone.boundsPadding = this.boundsPadding;
++        clone.dirty = 0;
++        clone.cachedSpriteDirty = this.cachedSpriteDirty;
++
++        // copy graphics data
++        for (let i = 0; i < this.graphicsData.length; ++i)
++        {
++            clone.graphicsData.push(this.graphicsData[i].clone());
++        }
++
++        clone.currentPath = clone.graphicsData[clone.graphicsData.length - 1];
++
++        clone.updateLocalBounds();
++
++        return clone;
++    }
++
++    /**
++     * Renders the object using the PXScene renderer
++     *
++     * @private
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    _renderPXScene(renderer)
++    {
++        super._renderPXScene(renderer);
++
++        // this is where content itself gets rendered...
++        if (this.renderedObject)
++        {
++            this.renderedObject.x = this.x;
++            this.renderedObject.y = this.y;
++            this.renderedObject.w = renderer.view.w;
++            this.renderedObject.h = renderer.view.h;
++            this.renderedObject.sx = this.scale.x;
++            this.renderedObject.sy = this.scale.y;
++        }
++        renderer.plugins[this.pluginName].render(this);
++    }
++
++    /**
++     * Specifies the line style used for subsequent calls to GraphicsV8 methods such as the lineTo()
++     * method or the drawCircle() method.
++     *
++     * @param {number} [lineWidth=0] - width of the line to draw, will update the objects stored style
++     * @param {number} [color=0] - color of the line to draw, will update the objects stored style
++     * @param {number} [alpha=1] - alpha of the line to draw, will update the objects stored style
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    lineStyle(lineWidth = 0, color = 0, alpha = 1)
++    {
++        this.lineWidth = lineWidth;
++        this.lineColor = color;
++        this.lineAlpha = alpha;
++
++        if (this.currentPath)
++        {
++            if (this.currentPath.shape.points.length)
++            {
++                // halfway through a line? start a new one!
++                const shape = new Polygon(this.currentPath.shape.points.slice(-2));
++
++                shape.closed = false;
++
++                this.drawShape(shape);
++            }
++            else
++            {
++                // otherwise its empty so lets just set the line properties
++                this.currentPath.lineWidth = this.lineWidth;
++                this.currentPath.lineColor = this.lineColor;
++                this.currentPath.lineAlpha = this.lineAlpha;
++            }
++        }
++
++        return this;
++    }
++
++    /**
++     * Moves the current drawing position to x, y.
++     *
++     * @param {number} x - the X coordinate to move to
++     * @param {number} y - the Y coordinate to move to
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    moveTo(x, y)
++    {
++        const shape = new Polygon([x, y]);
++
++        shape.closed = false;
++        this.drawShape(shape);
++
++        return this;
++    }
++
++    /**
++     * Draws a line using the current line style from the current drawing position to (x, y);
++     * The current drawing position is then set to (x, y).
++     *
++     * @param {number} x - the X coordinate to draw to
++     * @param {number} y - the Y coordinate to draw to
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    lineTo(x, y)
++    {
++        this.currentPath.shape.points.push(x, y);
++        this.dirty++;
++
++        return this;
++    }
++
++    /**
++     * Calculate the points for a quadratic bezier curve and then draws it.
++     * Based on: https://stackoverflow.com/questions/785097/how-do-i-implement-a-bezier-curve-in-c
++     *
++     * @param {number} cpX - Control point x
++     * @param {number} cpY - Control point y
++     * @param {number} toX - Destination point x
++     * @param {number} toY - Destination point y
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    quadraticCurveTo(cpX, cpY, toX, toY)
++    {
++        if (this.currentPath)
++        {
++            if (this.currentPath.shape.points.length === 0)
++            {
++                this.currentPath.shape.points = [0, 0];
++            }
++        }
++        else
++        {
++            this.moveTo(0, 0);
++        }
++
++        const n = 20;
++        const points = this.currentPath.shape.points;
++        let xa = 0;
++        let ya = 0;
++
++        if (points.length === 0)
++        {
++            this.moveTo(0, 0);
++        }
++
++        const fromX = points[points.length - 2];
++        const fromY = points[points.length - 1];
++
++        for (let i = 1; i <= n; ++i)
++        {
++            const j = i / n;
++
++            xa = fromX + ((cpX - fromX) * j);
++            ya = fromY + ((cpY - fromY) * j);
++
++            points.push(xa + (((cpX + ((toX - cpX) * j)) - xa) * j),
++                ya + (((cpY + ((toY - cpY) * j)) - ya) * j));
++        }
++
++        this.dirty++;
++
++        return this;
++    }
++
++    /**
++     * Calculate the points for a bezier curve and then draws it.
++     *
++     * @param {number} cpX - Control point x
++     * @param {number} cpY - Control point y
++     * @param {number} cpX2 - Second Control point x
++     * @param {number} cpY2 - Second Control point y
++     * @param {number} toX - Destination point x
++     * @param {number} toY - Destination point y
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    bezierCurveTo(cpX, cpY, cpX2, cpY2, toX, toY)
++    {
++        if (this.currentPath)
++        {
++            if (this.currentPath.shape.points.length === 0)
++            {
++                this.currentPath.shape.points = [0, 0];
++            }
++        }
++        else
++        {
++            this.moveTo(0, 0);
++        }
++
++        const points = this.currentPath.shape.points;
++
++        const fromX = points[points.length - 2];
++        const fromY = points[points.length - 1];
++
++        points.length -= 2;
++
++        bezierCurveTo(fromX, fromY, cpX, cpY, cpX2, cpY2, toX, toY, points);
++
++        this.dirty++;
++
++        return this;
++    }
++
++    /**
++     * The arcTo() method creates an arc/curve between two tangents on the canvas.
++     *
++     * "borrowed" from https://code.google.com/p/fxcanvas/ - thanks google!
++     *
++     * @param {number} x1 - The x-coordinate of the beginning of the arc
++     * @param {number} y1 - The y-coordinate of the beginning of the arc
++     * @param {number} x2 - The x-coordinate of the end of the arc
++     * @param {number} y2 - The y-coordinate of the end of the arc
++     * @param {number} radius - The radius of the arc
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    arcTo(x1, y1, x2, y2, radius)
++    {
++        if (this.currentPath)
++        {
++            if (this.currentPath.shape.points.length === 0)
++            {
++                this.currentPath.shape.points.push(x1, y1);
++            }
++        }
++        else
++        {
++            this.moveTo(x1, y1);
++        }
++
++        const points = this.currentPath.shape.points;
++        const fromX = points[points.length - 2];
++        const fromY = points[points.length - 1];
++        const a1 = fromY - y1;
++        const b1 = fromX - x1;
++        const a2 = y2 - y1;
++        const b2 = x2 - x1;
++        const mm = Math.abs((a1 * b2) - (b1 * a2));
++
++        if (mm < 1.0e-8 || radius === 0)
++        {
++            if (points[points.length - 2] !== x1 || points[points.length - 1] !== y1)
++            {
++                points.push(x1, y1);
++            }
++        }
++        else
++        {
++            const dd = (a1 * a1) + (b1 * b1);
++            const cc = (a2 * a2) + (b2 * b2);
++            const tt = (a1 * a2) + (b1 * b2);
++            const k1 = radius * Math.sqrt(dd) / mm;
++            const k2 = radius * Math.sqrt(cc) / mm;
++            const j1 = k1 * tt / dd;
++            const j2 = k2 * tt / cc;
++            const cx = (k1 * b2) + (k2 * b1);
++            const cy = (k1 * a2) + (k2 * a1);
++            const px = b1 * (k2 + j1);
++            const py = a1 * (k2 + j1);
++            const qx = b2 * (k1 + j2);
++            const qy = a2 * (k1 + j2);
++            const startAngle = Math.atan2(py - cy, px - cx);
++            const endAngle = Math.atan2(qy - cy, qx - cx);
++
++            this.arc(cx + x1, cy + y1, radius, startAngle, endAngle, b1 * a2 > b2 * a1);
++        }
++
++        this.dirty++;
++
++        return this;
++    }
++
++    /**
++     * The arc method creates an arc/curve (used to create circles, or parts of circles).
++     *
++     * @param {number} cx - The x-coordinate of the center of the circle
++     * @param {number} cy - The y-coordinate of the center of the circle
++     * @param {number} radius - The radius of the circle
++     * @param {number} startAngle - The starting angle, in radians (0 is at the 3 o'clock position
++     *  of the arc's circle)
++     * @param {number} endAngle - The ending angle, in radians
++     * @param {boolean} [anticlockwise=false] - Specifies whether the drawing should be
++     *  counter-clockwise or clockwise. False is default, and indicates clockwise, while true
++     *  indicates counter-clockwise.
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    arc(cx, cy, radius, startAngle, endAngle, anticlockwise = false)
++    {
++        if (startAngle === endAngle)
++        {
++            return this;
++        }
++
++        if (!anticlockwise && endAngle <= startAngle)
++        {
++            endAngle += Math.PI * 2;
++        }
++        else if (anticlockwise && startAngle <= endAngle)
++        {
++            startAngle += Math.PI * 2;
++        }
++
++        const sweep = endAngle - startAngle;
++        const segs = Math.ceil(Math.abs(sweep) / (Math.PI * 2)) * 40;
++
++        if (sweep === 0)
++        {
++            return this;
++        }
++
++        const startX = cx + (Math.cos(startAngle) * radius);
++        const startY = cy + (Math.sin(startAngle) * radius);
++
++        // If the currentPath exists, take its points. Otherwise call `moveTo` to start a path.
++        let points = this.currentPath ? this.currentPath.shape.points : null;
++
++        if (points)
++        {
++            if (points[points.length - 2] !== startX || points[points.length - 1] !== startY)
++            {
++                points.push(startX, startY);
++            }
++        }
++        else
++        {
++            this.moveTo(startX, startY);
++            points = this.currentPath.shape.points;
++        }
++
++        const theta = sweep / (segs * 2);
++        const theta2 = theta * 2;
++
++        const cTheta = Math.cos(theta);
++        const sTheta = Math.sin(theta);
++
++        const segMinus = segs - 1;
++
++        const remainder = (segMinus % 1) / segMinus;
++
++        for (let i = 0; i <= segMinus; ++i)
++        {
++            const real = i + (remainder * i);
++
++            const angle = ((theta) + startAngle + (theta2 * real));
++
++            const c = Math.cos(angle);
++            const s = -Math.sin(angle);
++
++            points.push(
++                (((cTheta * c) + (sTheta * s)) * radius) + cx,
++                (((cTheta * -s) + (sTheta * c)) * radius) + cy
++            );
++        }
++
++        this.dirty++;
++
++        return this;
++    }
++
++    /**
++     * Specifies a simple one-color fill that subsequent calls to other GraphicsV8 methods
++     * (such as lineTo() or drawCircle()) use when drawing.
++     *
++     * @param {number} [color=0] - the color of the fill
++     * @param {number} [alpha=1] - the alpha of the fill
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    beginFill(color = 0, alpha = 1)
++    {
++        this.filling = true;
++        this.fillColor = color;
++        this.fillAlpha = alpha;
++
++        if (this.currentPath)
++        {
++            if (this.currentPath.shape.points.length <= 2)
++            {
++                this.currentPath.fill = this.filling;
++                this.currentPath.fillColor = this.fillColor;
++                this.currentPath.fillAlpha = this.fillAlpha;
++            }
++        }
++
++        return this;
++    }
++
++    /**
++     * Applies a fill to the lines and shapes that were added since the last call to the beginFill() method.
++     *
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    endFill()
++    {
++        this.filling = false;
++        this.fillColor = null;
++        this.fillAlpha = 1;
++
++        return this;
++    }
++
++    /**
++     *
++     * @param {number} x - The X coord of the top-left of the rectangle
++     * @param {number} y - The Y coord of the top-left of the rectangle
++     * @param {number} width - The width of the rectangle
++     * @param {number} height - The height of the rectangle
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    drawRect(x, y, width, height)
++    {
++        this.drawShape(new Rectangle(x, y, width, height));
++
++        return this;
++    }
++
++    /**
++     *
++     * @param {number} x - The X coord of the top-left of the rectangle
++     * @param {number} y - The Y coord of the top-left of the rectangle
++     * @param {number} width - The width of the rectangle
++     * @param {number} height - The height of the rectangle
++     * @param {number} radius - Radius of the rectangle corners
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    drawRoundedRect(x, y, width, height, radius)
++    {
++        this.drawShape(new RoundedRectangle(x, y, width, height, radius));
++
++        return this;
++    }
++
++    /**
++     * Draws a circle.
++     *
++     * @param {number} x - The X coordinate of the center of the circle
++     * @param {number} y - The Y coordinate of the center of the circle
++     * @param {number} radius - The radius of the circle
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    drawCircle(x, y, radius)
++    {
++        this.drawShape(new Circle(x, y, radius));
++
++        return this;
++    }
++
++    /**
++     * Draws an ellipse.
++     *
++     * @param {number} x - The X coordinate of the center of the ellipse
++     * @param {number} y - The Y coordinate of the center of the ellipse
++     * @param {number} width - The half width of the ellipse
++     * @param {number} height - The half height of the ellipse
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    drawEllipse(x, y, width, height)
++    {
++        this.drawShape(new Ellipse(x, y, width, height));
++
++        return this;
++    }
++
++    /**
++     * Draws a polygon using the given path.
++     *
++     * @param {number[]|PIXI.Point[]} path - The path data used to construct the polygon.
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    drawPolygon(path)
++    {
++        // prevents an argument assignment deopt
++        // see section 3.1: https://github.com/petkaantonov/bluebird/wiki/Optimization-killers#3-managing-arguments
++        let points = path;
++
++        let closed = true;
++
++        if (points instanceof Polygon)
++        {
++            closed = points.closed;
++            points = points.points;
++        }
++
++        if (!Array.isArray(points))
++        {
++            // prevents an argument leak deopt
++            // see section 3.2: https://github.com/petkaantonov/bluebird/wiki/Optimization-killers#3-managing-arguments
++            points = new Array(arguments.length);
++
++            for (let i = 0; i < points.length; ++i)
++            {
++                points[i] = arguments[i]; // eslint-disable-line prefer-rest-params
++            }
++        }
++
++        const shape = new Polygon(points);
++
++        shape.closed = closed;
++
++        this.drawShape(shape);
++
++        return this;
++    }
++
++    /**
++     * Clears the graphics that were drawn to this GraphicsV8 object, and resets fill and line style settings.
++     *
++     * @return {PIXI.GraphicsV8} This GraphicsV8 object. Good for chaining method calls
++     */
++    clear()
++    {
++        if (this.lineWidth || this.filling || this.graphicsData.length > 0)
++        {
++            this.lineWidth = 0;
++            this.filling = false;
++
++            this.boundsDirty = -1;
++            this.dirty++;
++            this.clearDirty++;
++            this.graphicsData.length = 0;
++        }
++
++        this.currentPath = null;
++        this._spriteRect = null;
++
++        return this;
++    }
++
++    /**
++     * Clear all rendered objects in scene.
++     */
++    clearAllRenderedObjects()
++    {
++        for (let i = 0; i < this.renderedObjects.length; ++i)
++        {
++            const obj = this.renderedObjects[i];
++
++            if (obj)
++            {
++                obj.remove();
++            }
++        }
++        this.renderedObjects.length = 0;
++    }
++
++    /**
++     * Retrieves the bounds of the graphic shape as a rectangle object
++     *
++     * @private
++     */
++    _calculateBounds()
++    {
++        if (this.boundsDirty !== this.dirty)
++        {
++            this.boundsDirty = this.dirty;
++            this.updateLocalBounds();
++
++            this.cachedSpriteDirty = true;
++        }
++
++        const lb = this._localBounds;
++
++        this._bounds.addFrame(this.transform, lb.minX, lb.minY, lb.maxX, lb.maxY);
++    }
++
++    /**
++     * Tests if a point is inside this graphics object
++     *
++     * @param {PIXI.Point} point - the point to test
++     * @return {boolean} the result of the test
++     */
++    containsPoint(point)
++    {
++        this.worldTransform.applyInverse(point, tempPoint);
++
++        const graphicsData = this.graphicsData;
++
++        for (let i = 0; i < graphicsData.length; ++i)
++        {
++            const data = graphicsData[i];
++
++            if (!data.fill)
++            {
++                continue;
++            }
++
++            // only deal with fills..
++            if (data.shape)
++            {
++                if (data.shape.contains(tempPoint.x, tempPoint.y))
++                {
++                    return true;
++                }
++            }
++        }
++
++        return false;
++    }
++
++    /**
++     * Update the bounds of the object
++     *
++     */
++    updateLocalBounds()
++    {
++        let minX = Infinity;
++        let maxX = -Infinity;
++
++        let minY = Infinity;
++        let maxY = -Infinity;
++
++        if (this.graphicsData.length)
++        {
++            let shape = 0;
++            let x = 0;
++            let y = 0;
++            let w = 0;
++            let h = 0;
++
++            for (let i = 0; i < this.graphicsData.length; i++)
++            {
++                const data = this.graphicsData[i];
++                const type = data.type;
++                const lineWidth = data.lineWidth;
++
++                shape = data.shape;
++
++                if (type === SHAPES.RECT || type === SHAPES.RREC)
++                {
++                    x = shape.x - (lineWidth / 2);
++                    y = shape.y - (lineWidth / 2);
++                    w = shape.width + lineWidth;
++                    h = shape.height + lineWidth;
++
++                    minX = x < minX ? x : minX;
++                    maxX = x + w > maxX ? x + w : maxX;
++
++                    minY = y < minY ? y : minY;
++                    maxY = y + h > maxY ? y + h : maxY;
++                }
++                else if (type === SHAPES.CIRC)
++                {
++                    x = shape.x;
++                    y = shape.y;
++                    w = shape.radius + (lineWidth / 2);
++                    h = shape.radius + (lineWidth / 2);
++
++                    minX = x - w < minX ? x - w : minX;
++                    maxX = x + w > maxX ? x + w : maxX;
++
++                    minY = y - h < minY ? y - h : minY;
++                    maxY = y + h > maxY ? y + h : maxY;
++                }
++                else if (type === SHAPES.ELIP)
++                {
++                    x = shape.x;
++                    y = shape.y;
++                    w = shape.width + (lineWidth / 2);
++                    h = shape.height + (lineWidth / 2);
++
++                    minX = x - w < minX ? x - w : minX;
++                    maxX = x + w > maxX ? x + w : maxX;
++
++                    minY = y - h < minY ? y - h : minY;
++                    maxY = y + h > maxY ? y + h : maxY;
++                }
++                else
++                {
++                    // POLY
++                    const points = shape.points;
++                    let x2 = 0;
++                    let y2 = 0;
++                    let dx = 0;
++                    let dy = 0;
++                    let rw = 0;
++                    let rh = 0;
++                    let cx = 0;
++                    let cy = 0;
++
++                    for (let j = 0; j + 2 < points.length; j += 2)
++                    {
++                        x = points[j];
++                        y = points[j + 1];
++                        x2 = points[j + 2];
++                        y2 = points[j + 3];
++                        dx = Math.abs(x2 - x);
++                        dy = Math.abs(y2 - y);
++                        h = lineWidth;
++                        w = Math.sqrt((dx * dx) + (dy * dy));
++
++                        if (w < 1e-9)
++                        {
++                            continue;
++                        }
++
++                        rw = ((h / w * dy) + dx) / 2;
++                        rh = ((h / w * dx) + dy) / 2;
++                        cx = (x2 + x) / 2;
++                        cy = (y2 + y) / 2;
++
++                        minX = cx - rw < minX ? cx - rw : minX;
++                        maxX = cx + rw > maxX ? cx + rw : maxX;
++
++                        minY = cy - rh < minY ? cy - rh : minY;
++                        maxY = cy + rh > maxY ? cy + rh : maxY;
++                    }
++                }
++            }
++        }
++        else
++        {
++            minX = 0;
++            maxX = 0;
++            minY = 0;
++            maxY = 0;
++        }
++
++        const padding = this.boundsPadding;
++
++        this._localBounds.minX = minX - padding;
++        this._localBounds.maxX = maxX + (padding * 2);
++
++        this._localBounds.minY = minY - padding;
++        this._localBounds.maxY = maxY + (padding * 2);
++    }
++
++    /**
++     * Draws the given shape to this GraphicsV8 object. Can be any of Circle, Rectangle, Ellipse, Line or Polygon.
++     *
++     * @param {PIXI.Circle|PIXI.Ellipse|PIXI.Polygon|PIXI.Rectangle|PIXI.RoundedRectangle} shape - The shape object to draw.
++     * @return {PIXI.GraphicsData} The generated GraphicsData object.
++     */
++    drawShape(shape)
++    {
++        if (this.currentPath)
++        {
++            // check current path!
++            if (this.currentPath.shape.points.length <= 2)
++            {
++                this.graphicsData.pop();
++            }
++        }
++
++        this.currentPath = null;
++
++        const data = new GraphicsData(
++            this.lineWidth,
++            this.lineColor,
++            this.lineAlpha,
++            this.fillColor,
++            this.fillAlpha,
++            this.filling,
++            this.nativeLines,
++            shape
++        );
++
++        this.graphicsData.push(data);
++
++        if (data.type === SHAPES.POLY)
++        {
++            data.shape.closed = data.shape.closed || this.filling;
++            this.currentPath = data;
++        }
++
++        this.dirty++;
++
++        return data;
++    }
++
++    /**
++     * Closes the current path.
++     *
++     * @return {PIXI.GraphicsV8} Returns itself.
++     */
++    closePath()
++    {
++        // ok so close path assumes next one is a hole!
++        const currentPath = this.currentPath;
++
++        if (currentPath && currentPath.shape)
++        {
++            currentPath.shape.close();
++        }
++
++        return this;
++    }
++
++    /**
++     * Adds a hole in the current path.
++     *
++     * @return {PIXI.GraphicsV8} Returns itself.
++     */
++    addHole()
++    {
++        // this is a hole!
++        const hole = this.graphicsData.pop();
++
++        this.currentPath = this.graphicsData[this.graphicsData.length - 1];
++
++        this.currentPath.addHole(hole.shape);
++        this.currentPath = null;
++
++        return this;
++    }
++
++    /**
++     * Destroys the GraphicsV8 object.
++     *
++     * @param {object|boolean} [options] - Options parameter. A boolean will act as if all
++     *  options have been set to that value
++     * @param {boolean} [options.children=false] - if set to true, all the children will have
++     *  their destroy method called as well. 'options' will be passed on to those calls.
++     * @param {boolean} [options.texture=false] - Only used for child Sprites if options.children is set to true
++     *  Should it destroy the texture of the child sprite
++     * @param {boolean} [options.baseTexture=false] - Only used for child Sprites if options.children is set to true
++     *  Should it destroy the base texture of the child sprite
++     */
++    destroy(options)
++    {
++        super.destroy(options);
++
++        // destroy each of the GraphicsData objects
++        for (let i = 0; i < this.graphicsData.length; ++i)
++        {
++            this.graphicsData[i].destroy();
++        }
++
++        if (this._spriteRect)
++        {
++            this._spriteRect.destroy();
++        }
++
++        this.graphicsData = null;
++
++        this.currentPath = null;
++        this._localBounds = null;
++    }
++
++}
++
++GraphicsV8._SPRITE_TEXTURE = null;
+diff --git a/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
+new file mode 100644
+index 00000000..83735cb2
+--- /dev/null
++++ b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
+@@ -0,0 +1,398 @@
++import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
++import { SHAPES } from '../../const';
++import { hex2rgb, rgb2rgba, rgba2hex } from '../../utils';
++
++// Map: font family name -> fontUrl
++// Set key lowercase
++const CIRCLE_IMAGE_PATH = 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/circle-mask.png';
++
++/**
++ * Renderer dedicated to drawing and batching graphics objects.
++ *
++ * @class
++ * @private
++ * @memberof PIXI
++ */
++export default class PXSceneGraphicsRenderer
++{
++    /**
++     * @param {PIXI.CanvasRenderer} renderer - The current PIXI renderer.
++     */
++    constructor(renderer)
++    {
++        this.renderer = renderer;
++
++        this.prevPoint = null;
++
++        this.renderOptions = null;
++
++        this.graphics = null;
++
++        this.circleResource = null;
++    }
++
++    /**
++     * Moves the current drawing position to x, y.
++     *
++     * @param {number} x - the X coordinate to move to
++     * @param {number} y - the Y coordinate to move to
++     */
++    moveTo(x, y)
++    {
++        this.prevPoint = { x, y };
++    }
++
++    /**
++     * Draws a line using the current line style from the current drawing position to (x, y);
++     * The current drawing position is then set to (x, y).
++     *
++     * @param {number} x - the X coordinate to draw to
++     * @param {number} y - the Y coordinate to draw to
++     */
++    lineTo(x, y)
++    {
++        const curPoint = { x, y };
++        const graphics = this.graphics;
++
++        graphics.renderedObjects.push(this.drawLine(this.prevPoint, curPoint, this.renderOptions));
++        this.prevPoint = curPoint;
++    }
++
++    /**
++     * Renders a Graphics object to a canvas.
++     *
++     * @param {PIXI.Graphics} graphics - the actual graphics object to render
++     */
++    render(graphics)
++    {
++        if (!graphics || !graphics.renderedObject)
++        {
++            return;
++        }
++
++        this.graphics = graphics;
++        graphics.clearAllRenderedObjects();
++
++        const worldAlpha = graphics.worldAlpha;
++
++        // if the tint has changed, set the graphics object to dirty.
++        if (this._prevTint !== this.tint)
++        {
++            this.dirty = true;
++        }
++
++        if (graphics.dirty)
++        {
++            this.updateGraphicsTint(graphics);
++            graphics.dirty = false;
++        }
++
++        for (let i = 0; i < graphics.graphicsData.length; i++)
++        {
++            const data = graphics.graphicsData[i];
++            const shape = data.shape;
++
++            const fillColor = rgba2hex(rgb2rgba(hex2rgb(data._fillTint)));
++            const strokeLineColor = rgba2hex(rgb2rgba(hex2rgb(data._lineTint)));
++
++            const strokeLineWidth = data.lineWidth;
++
++            const options = {
++                globalAlpha: data.fillAlpha * worldAlpha,
++                fillColor,
++                strokeLineColor,
++                strokeLineWidth,
++            };
++
++            if (data.type === SHAPES.POLY)
++            {
++                // Not support fill.
++
++                this.renderOptions = options;
++                this.renderPolygon(shape.points);
++
++                for (let j = 0; j < data.holes.length; j++)
++                {
++                    this.renderPolygon(data.holes[j].points);
++                }
++                this.renderOptions = null;
++            }
++            else if (data.type === SHAPES.RECT)
++            {
++                // Draw rect directly
++                this.renderOptions = options;
++
++                this.renderRect(shape);
++
++                this.renderOptions = null;
++            }
++            else if (data.type === SHAPES.CIRC)
++            {
++                // A trick way, use an image as a mask
++                // Not support outlines.
++
++                this.renderOptions = options;
++
++                if (!this.circleResource)
++                {
++                    const circleResource = this.renderer.view.create({
++                        t: 'imageResource',
++                        url: CIRCLE_IMAGE_PATH,
++                    });
++
++                    circleResource.ready.then((resource) =>
++                    {
++                        this.circleResource = resource;
++                        this.renderCircle(shape);
++                    });
++                }
++                else
++                {
++                    this.renderCircle(shape);
++                }
++
++                this.renderOptions = null;
++            }
++            else if (data.type === SHAPES.ELIP)
++            {
++                // TODO
++                // Not supported yet
++            }
++            else if (data.type === SHAPES.RREC)
++            {
++                // TODO
++                // Not supported yet
++            }
++        }
++
++        this.graphics = null;
++    }
++
++    /**
++     * Updates the tint of a graphics object
++     *
++     * @private
++     * @param {PIXI.Graphics} graphics - the graphics that will have its tint updated
++     */
++    updateGraphicsTint(graphics)
++    {
++        graphics._prevTint = graphics.tint;
++
++        const tintR = ((graphics.tint >> 16) & 0xFF) / 255;
++        const tintG = ((graphics.tint >> 8) & 0xFF) / 255;
++        const tintB = (graphics.tint & 0xFF) / 255;
++
++        for (let i = 0; i < graphics.graphicsData.length; ++i)
++        {
++            const data = graphics.graphicsData[i];
++
++            const fillColor = data.fillColor | 0;
++            const lineColor = data.lineColor | 0;
++
++            // super inline cos im an optimization NAZI :)
++            data._fillTint = (
++                (((fillColor >> 16) & 0xFF) / 255 * tintR * 255 << 16)
++                + (((fillColor >> 8) & 0xFF) / 255 * tintG * 255 << 8)
++                + (((fillColor & 0xFF) / 255) * tintB * 255)
++            );
++
++            data._lineTint = (
++                (((lineColor >> 16) & 0xFF) / 255 * tintR * 255 << 16)
++                + (((lineColor >> 8) & 0xFF) / 255 * tintG * 255 << 8)
++                + (((lineColor & 0xFF) / 255) * tintB * 255)
++            );
++        }
++    }
++
++    /**
++     * Renders a polygon.
++     *
++     * @param {PIXI.Point[]} points - The points to render
++     * @param {boolean} close - Should the polygon be closed
++     * @param {CanvasRenderingContext2D} context - The rendering context to use
++     */
++    renderPolygon(points)
++    {
++        this.moveTo(points[0], points[1]);
++
++        for (let j = 1; j < points.length / 2; ++j)
++        {
++            this.lineTo(points[j * 2], points[(j * 2) + 1]);
++        }
++    }
++
++    /**
++     * Renders a rectangle.
++     *
++     * @param {Object} shape - The shape data.
++     */
++    renderRect(shape)
++    {
++        const graphics = this.graphics;
++
++        if (!graphics || !graphics.renderedObject)
++        {
++            return;
++        }
++        const parentRenderedObject = graphics.renderedObject || this.renderer.context;
++
++        const rect = this.renderer.view.create({
++            t: 'rect',
++            parent: parentRenderedObject,
++        });
++
++        const renderOptions = this.renderOptions;
++
++        rect.x = shape.x;
++        rect.y = shape.y;
++        rect.w = shape.width;
++        rect.h = shape.height;
++        rect.a = renderOptions.globalAlpha;
++        rect.fillColor = renderOptions.fillColor;
++        rect.lineColor = renderOptions.strokeLineColor;
++        rect.lineWidth = renderOptions.strokeLineWidth;
++
++        graphics.renderedObjects.push(rect);
++    }
++
++    /**
++     * Renders a circle.
++     *
++     * @param {Object} shape - The shape data.
++     */
++    renderCircle(shape)
++    {
++        const graphics = this.graphics;
++
++        if (!graphics || !graphics.renderedObject)
++        {
++            return;
++        }
++        const parentRenderedObject = graphics.renderedObject || this.renderer.context;
++
++        const renderOptions = this.renderOptions;
++        const spriteWidth = this.circleResource.w;
++        const spriteHeight = this.circleResource.h;
++
++        const circleRadius = spriteWidth / 2;
++
++        const ratio = shape.radius / circleRadius;
++
++        const circle = this.renderer.view.create({
++            t: 'rect',
++            parent: parentRenderedObject,
++        });
++
++        circle.w = spriteWidth * ratio;
++        circle.h = spriteHeight * ratio;
++        circle.cx = circle.w * 0.5;
++        circle.cy = circle.w * 0.5;
++        circle.x = shape.x - circle.cx;
++        circle.y = shape.y - circle.cy;
++
++        const circleMaskImage = this.renderer.view.create({
++            t: 'image',
++            resource: this.circleResource,
++            parent: circle,
++            mask: true,
++            draw: false,
++        });
++
++        let cx = spriteWidth * 0.5;
++        let cy = spriteHeight * 0.5;
++
++        circleMaskImage.x = -cx + circle.cx;
++        circleMaskImage.y = -cy + circle.cy;
++        circleMaskImage.cx = cx;
++        circleMaskImage.cy = cy;
++        circleMaskImage.sx = ratio;
++        circleMaskImage.sy = ratio;
++
++        const circleView = this.renderer.view.create({
++            t: 'rect',
++            parent: circle,
++        });
++
++        cx *= ratio;
++        cy *= ratio;
++
++        circleView.x = 0;
++        circleView.y = 0;
++        circleView.w = circleRadius * 2 * ratio;
++        circleView.h = circleRadius * 2 * ratio;
++        circleView.cx = cx;
++        circleView.cy = cy;
++        circleView.fillColor = renderOptions.fillColor;
++        circleView.a = renderOptions.globalAlpha;
++
++        graphics.renderedObjects.push(circle);
++    }
++
++    /**
++     * Draw a single line
++     *
++     * @param {Object} startPoint - Start point of the line.
++     * @param {Object} endPoint - End point of the line
++     * @param {Object} options - extra options of the line
++     * @return {Object} The line, Render Target object in pxscene.
++     */
++    drawLine(startPoint, endPoint, options)
++    {
++        const graphics = this.graphics;
++
++        if (!graphics || !graphics.renderedObject)
++        {
++            return null;
++        }
++        const parentRenderedObject = graphics.renderedObject || this.renderer.context;
++
++        let lineWidth = 2;
++        let color = 0xFFFFFFFF;
++        let alpha = 1;
++
++        if (options)
++        {
++            lineWidth = options.strokeLineWidth;
++            color = options.strokeLineColor;
++            alpha = options.globalAlpha;
++        }
++
++        const line = this.renderer.view.create({
++            t: 'rect',
++            parent: parentRenderedObject,
++        });
++
++        line.x = startPoint.x;
++        line.y = startPoint.y;
++
++        const xDiff = endPoint.x - startPoint.x;
++        const yDiff = endPoint.y - startPoint.y;
++
++        const width = Math.sqrt((xDiff * xDiff) + (yDiff * yDiff));
++
++        const rotation = Math.atan2(yDiff, xDiff);
++
++        const height = lineWidth;
++
++        line.w = width;
++        line.h = height;
++        line.fillColor = color;
++        line.r = rotation * 180 / Math.PI;
++        line.a = alpha;
++
++        return line;
++    }
++
++    /**
++     * destroy graphics object
++     *
++     */
++    destroy()
++    {
++        this.renderer = null;
++        this.circleResource = null;
++        this.graphics = null;
++    }
++}
++
++PXSceneRenderer.registerPlugin('graphicsV8', PXSceneGraphicsRenderer);
 diff --git a/src/core/index.js b/src/core/index.js
-index f03fe153..6417d44f 100644
+index f03fe153..7b7f772b 100644
 --- a/src/core/index.js
 +++ b/src/core/index.js
 @@ -9,8 +9,9 @@ import * as ticker from './ticker';
@@ -130,7 +1672,7 @@ index f03fe153..6417d44f 100644
  
  export { default as glCore } from 'pixi-gl-core';
  
-@@ -22,10 +23,12 @@ export { default as TransformStatic } from './display/TransformStatic';
+@@ -22,14 +23,18 @@ export { default as TransformStatic } from './display/TransformStatic';
  export { default as TransformBase } from './display/TransformBase';
  export { default as Sprite } from './sprites/Sprite';
  export { default as CanvasSpriteRenderer } from './sprites/canvas/CanvasSpriteRenderer';
@@ -143,17 +1685,24 @@ index f03fe153..6417d44f 100644
  export { default as Graphics } from './graphics/Graphics';
  export { default as GraphicsData } from './graphics/GraphicsData';
  export { default as GraphicsRenderer } from './graphics/webgl/GraphicsRenderer';
+ export { default as CanvasGraphicsRenderer } from './graphics/canvas/CanvasGraphicsRenderer';
++export { default as GraphicsV8 } from './graphics/GraphicsV8';
++export { default as PXSceneGraphicsRenderer } from './graphics/pxscene/PXSceneGraphicsRenderer';
+ export { default as Spritesheet } from './textures/Spritesheet';
+ export { default as Texture } from './textures/Texture';
+ export { default as BaseTexture } from './textures/BaseTexture';
 diff --git a/src/core/renderers/pxscene/PXSceneRenderer.js b/src/core/renderers/pxscene/PXSceneRenderer.js
 new file mode 100644
-index 00000000..938e7e52
+index 00000000..b4c911f8
 --- /dev/null
 +++ b/src/core/renderers/pxscene/PXSceneRenderer.js
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,260 @@
 +import SystemRenderer from '../SystemRenderer';
 +import { pluginTarget, hex2rgb, rgb2rgba, rgba2hex } from '../../utils';
 +import { RENDERER_TYPE, SCALE_MODES } from '../../const';
 +import settings from '../../settings';
-+import CanvasRenderTarget from '../canvas/utils/CanvasRenderTarget';
++import PXSceneRenderTarget from './utils/PXSceneRenderTarget';
++import * as _ from 'lodash';
 +
 +/**
 + * The PXSceneRenderer draws the scene and all its content onto a pxscene window.
@@ -180,7 +1729,7 @@ index 00000000..938e7e52
 +
 +        let backgroundColor = 0;
 +
-+        if (typeof options.backgroundColor !== 'undefined')
++        if (!options.transparent && typeof options.backgroundColor !== 'undefined')
 +        {
 +            backgroundColor = rgba2hex(rgb2rgba(hex2rgb(options.backgroundColor)));
 +        }
@@ -231,67 +1780,68 @@ index 00000000..938e7e52
 +
 +        this.emit('prerender');
 +
-+        const rootResolution = this.resolution;
++        this.context = this.rootContext;
 +
 +        if (renderTexture)
 +        {
-+            renderTexture = renderTexture.baseTexture || renderTexture;
++            // renderTexture = renderTexture.baseTexture || renderTexture;
 +
-+            if (!renderTexture._canvasRenderTarget)
++            if (!renderTexture._pxsceneRenderTarget)
 +            {
-+                renderTexture._canvasRenderTarget = new CanvasRenderTarget(
++                renderTexture._pxsceneRenderTarget = new PXSceneRenderTarget(
 +                    renderTexture.width,
 +                    renderTexture.height,
 +                    renderTexture.resolution
 +                );
-+                renderTexture.source = renderTexture._canvasRenderTarget.canvas;
++                renderTexture.source = null; // null for render target texture
 +                renderTexture.valid = true;
 +            }
 +
-+            this.context = renderTexture._canvasRenderTarget.context;
-+            this.resolution = renderTexture._canvasRenderTarget.resolution;
++            if (displayObject !== renderTexture._pxsceneRenderTarget.prevRenderedObject)
++            {
++                const child = renderTexture._pxsceneRenderTarget.children[0];
++
++                if (child)
++                {
++                    renderTexture._pxsceneRenderTarget.clear();
++                }
++                // Render to texture (add it as child)
++                const clonedObject = _.cloneDeep(displayObject);
++
++                this._setRenderDirty(clonedObject);
++                renderTexture._pxsceneRenderTarget.addChild(clonedObject);
++                renderTexture._pxsceneRenderTarget.updateTransform();
++                renderTexture._pxsceneRenderTarget.prevRenderedObject = displayObject;
++            }
 +        }
 +        else
 +        {
-+            this.context = this.rootContext;
-+        }
-+
-+        const context = this.context;
-+
-+        if (!renderTexture)
-+        {
 +            this._lastObjectRendered = displayObject;
-+        }
 +
-+        if (!skipUpdateTransform)
-+        {
-+            const cacheParent = displayObject.parent;
-+            const tempWt = this._tempDisplayObjectParent.transform.worldTransform;
-+
-+            if (transform)
++            if (!skipUpdateTransform)
 +            {
-+                transform.copy(tempWt);
++                const cacheParent = displayObject.parent;
++                const tempWt = this._tempDisplayObjectParent.transform.worldTransform;
 +
-+                this._tempDisplayObjectParent.transform._worldID = -1;
++                if (transform)
++                {
++                    transform.copy(tempWt);
++
++                    this._tempDisplayObjectParent.transform._worldID = -1;
++                }
++                else
++                {
++                    tempWt.identity();
++                }
++
++                displayObject.parent = this._tempDisplayObjectParent;
++
++                displayObject.updateTransform();
++                displayObject.parent = cacheParent;
 +            }
-+            else
-+            {
-+                tempWt.identity();
-+            }
 +
-+            displayObject.parent = this._tempDisplayObjectParent;
-+
-+            displayObject.updateTransform();
-+            displayObject.parent = cacheParent;
++            displayObject.renderPXScene(this);
 +        }
-+
-+        const tempContext = this.context;
-+
-+        this.context = context;
-+        displayObject.renderPXScene(this);
-+        this.context = tempContext;
-+
-+        this.resolution = rootResolution;
 +
 +        this.emit('postrender');
 +    }
@@ -379,11 +1929,119 @@ index 00000000..938e7e52
 +            this.rootContext[this.smoothProperty] = (settings.SCALE_MODE === SCALE_MODES.LINEAR);
 +        }
 +    }
++
++    /**
++     * Set the render object be dirty to force
++     * it render again
++     *
++     * @param {object} obj - The object contains a rendered object.
++     * @private
++     */
++    _setRenderDirty(obj)
++    {
++        if (_.has(obj, 'renderedObject'))
++        {
++            obj.renderedObject = null;
++        }
++        if (!obj.children || obj.children.length === 0)
++        {
++            return;
++        }
++        for (let i = 0; i < obj.children.length; ++i)
++        {
++            const child = obj.children[i];
++
++            this._setRenderDirty(child);
++        }
++    }
 +}
 +
 +pluginTarget.mixin(PXSceneRenderer);
+diff --git a/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js b/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
+new file mode 100644
+index 00000000..96423358
+--- /dev/null
++++ b/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
+@@ -0,0 +1,77 @@
++import settings from '../../../settings';
++import Container from '../../../display/Container';
++// import { Point } from '../../../math';
++
++/**
++ * Creates a PXScene Render target of the given size.
++ *
++ * @class
++ * @memberof PIXI
++ */
++export default class PXSceneRenderTarget extends Container
++{
++    /**
++     * @param {number} width - the width for the newly created canvas
++     * @param {number} height - the height for the newly created canvas
++     * @param {number} [resolution=1] - The resolution / device pixel ratio of the canvas
++     */
++    constructor(width, height, resolution)
++    {
++        super();
++
++        this.resolution = resolution || settings.RESOLUTION;
++
++        this.renderedObjectMask = null;
++
++        this.width = width;
++        this.height = height;
++
++        this.canvasWidth = width;
++        this.canvasHeight = height;
++    }
++
++    /**
++     * Clears the canvas that was created by the CanvasRenderTarget class.
++     *
++     * @private
++     */
++    clear()
++    {
++        this.destroyAllChildren(true);
++    }
++
++    /**
++     * Destroys this canvas.
++     *
++     */
++    destroy()
++    {
++        this.context = null;
++        this.renderer = null;
++        if (this.renderedObjectMask)
++        {
++            this.renderedObjectMask.remove();
++            this.renderedObjectMask = null;
++        }
++    }
++
++    /**
++     * To be overridden by the subclass
++     *
++     * @private
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    _renderPXScene(renderer) // eslint-disable-line no-unused-vars
++    {
++        super._renderPXScene(renderer);
++        // this is where content itself gets rendered...
++        if (this.renderedObject)
++        {
++            this.renderedObject.clip = true;
++            this.renderedObject.w = this.canvasWidth;
++            this.renderedObject.h = this.canvasHeight;
++            this.renderedObject.sx = this.scale.x;
++            this.renderedObject.sy = this.scale.y;
++        }
++    }
++}
 diff --git a/src/core/sprites/Sprite.js b/src/core/sprites/Sprite.js
-index 28b0b18e..b8912dd0 100644
+index 28b0b18e..aa622348 100644
 --- a/src/core/sprites/Sprite.js
 +++ b/src/core/sprites/Sprite.js
 @@ -1,5 +1,5 @@
@@ -393,7 +2051,37 @@ index 28b0b18e..b8912dd0 100644
  import { BLEND_MODES } from '../const';
  import Texture from '../textures/Texture';
  import Container from '../display/Container';
-@@ -319,6 +319,17 @@ export default class Sprite extends Container
+@@ -102,6 +102,13 @@ export default class Sprite extends Container
+         // call texture setter
+         this.texture = texture || Texture.EMPTY;
+ 
++        this.textureDirty = false;
++
++        // Includes width, height, scale
++        this.widthDirty = false;
++        this.heightDirty = false;
++        this.scaleDirty = false;
++
+         /**
+          * this is used to store the vertex data of the sprite (basically a quad)
+          *
+@@ -143,7 +150,6 @@ export default class Sprite extends Container
+     {
+         this._textureID = -1;
+         this._textureTrimmedID = -1;
+-
+         // so if _width is 0 then width was not set..
+         if (this._width)
+         {
+@@ -154,6 +160,7 @@ export default class Sprite extends Container
+         {
+             this.scale.y = sign(this.scale.y) * this._height / this.texture.orig.height;
+         }
++        this.textureDirty = false;
+     }
+ 
+     /**
+@@ -319,6 +326,17 @@ export default class Sprite extends Container
      }
  
      /**
@@ -411,7 +2099,7 @@ index 28b0b18e..b8912dd0 100644
       * Updates the bounds of the sprite.
       *
       * @private
-@@ -385,15 +396,26 @@ export default class Sprite extends Container
+@@ -385,15 +403,26 @@ export default class Sprite extends Container
      {
          this.worldTransform.applyInverse(point, tempPoint);
  
@@ -441,14 +2129,215 @@ index 28b0b18e..b8912dd0 100644
              if (tempPoint.y > y1 && tempPoint.y < y1 + height)
              {
                  return true;
+@@ -484,21 +513,109 @@ export default class Sprite extends Container
+     }
+ 
+     /**
++     * Update attribute by dirty flags
++     *
++     * @returns {boolean} Update successfully or not.
++     */
++    updateAttr()
++    {
++        const renderedObject = this.renderedObject;
++
++        if (renderedObject)
++        {
++            const spriteWidth = renderedObject.resource.w;
++            const spriteHeight = renderedObject.resource.h;
++
++            if (!spriteWidth || !spriteHeight)
++            {
++                return false;
++            }
++
++            this._texture.orig.width = spriteWidth;
++            this._texture.orig.height = spriteHeight;
++
++            if (this.widthDirty)
++            {
++                this._calcScaleFromWidth(this._width);
++                this.widthDirty = false;
++            }
++
++            if (this.heightDirty)
++            {
++                this._calcScaleFromHeight(this._height);
++                this.heightDirty = false;
++            }
++
++            if (this.scaleDirty)
++            {
++                this._calcWidthHeightFromScale(this.scale);
++                this.scaleDirty = false;
++            }
++
++            return true;
++        }
++
++        return false;
++    }
++
++    /**
++     * Calculate scale from width
++     *
++     * @param {Number} width - The width of sprite
++     * @private
++     */
++    _calcScaleFromWidth(width)
++    {
++        const s = sign(this.scale.x) || 1;
++
++        this.scale.x = s * width / this._texture.orig.width;
++    }
++
++    /**
+      * The width of the sprite, setting this will actually modify the scale to achieve the value set
+      *
+      * @member {number}
+      */
+     get width()
+     {
++        if (isV8())
++        {
++            return this._width;
++        }
++
+         return Math.abs(this.scale.x) * this._texture.orig.width;
+     }
+ 
+     set width(value) // eslint-disable-line require-jsdoc
+     {
+-        const s = sign(this.scale.x) || 1;
+-
+-        this.scale.x = s * value / this._texture.orig.width;
+         this._width = value;
++        if (!isV8())
++        {
++            this._calcScaleFromWidth(value);
++        }
++        else if (this.updateAttr())
++        {
++            this._calcScaleFromWidth(value);
++
++            this.widthDirty = false;
++        }
++        else
++        {
++            this.widthDirty = true;
++        }
++    }
++
++    /**
++     * Calculate scale from height
++     *
++     * @param {Number} height - The height of sprite
++     * @private
++     */
++    _calcScaleFromHeight(height)
++    {
++        const s = sign(this.scale.y) || 1;
++
++        this.scale.y = s * height / this._texture.orig.height;
+     }
+ 
+     /**
+@@ -508,15 +625,73 @@ export default class Sprite extends Container
+      */
+     get height()
+     {
++        if (isV8())
++        {
++            return this._height;
++        }
++
+         return Math.abs(this.scale.y) * this._texture.orig.height;
+     }
+ 
+     set height(value) // eslint-disable-line require-jsdoc
+     {
+-        const s = sign(this.scale.y) || 1;
+-
+-        this.scale.y = s * value / this._texture.orig.height;
+         this._height = value;
++        if (!isV8())
++        {
++            this._calcScaleFromHeight(value);
++        }
++        else if (this.updateAttr())
++        {
++            this._calcScaleFromHeight(this._height);
++
++            this.heightDirty = false;
++        }
++        else
++        {
++            this.heightDirty = true;
++        }
++    }
++
++    /**
++     * Calculate width & heigth from scale
++     *
++     * @param {Number} scale - The scale of sprite
++     * @private
++     */
++    _calcWidthHeightFromScale(scale)
++    {
++        this._width = Math.abs(scale.x) * this._texture.orig.width;
++        this._height = Math.abs(scale.y) * this._texture.orig.height;
++    }
++
++    /**
++     * The scale factor of the object.
++     * Assignment by value since pixi-v4.
++     *
++     * @member {PIXI.Point|PIXI.ObservablePoint}
++     */
++    get scale()
++    {
++        return this.transform.scale;
++    }
++
++    set scale(value) // eslint-disable-line require-jsdoc
++    {
++        this.transform.scale.copy(value);
++
++        if (isV8())
++        {
++            if (this.updateAttr())
++            {
++                this._calcWidthHeightFromScale(value);
++
++                this.scaleDirty = false;
++            }
++            else
++            {
++                this.scaleDirty = true;
++            }
++        }
+     }
+ 
+     /**
+@@ -577,8 +752,9 @@ export default class Sprite extends Container
+ 
+         this._textureID = -1;
+         this._textureTrimmedID = -1;
++        this.textureDirty = true;
+ 
+-        if (value)
++        if (!isV8() && value)
+         {
+             // wait for the texture to load
+             if (value.baseTexture.hasLoaded)
 diff --git a/src/core/sprites/pxscene/PXSceneSpriteRenderer.js b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
 new file mode 100644
-index 00000000..83cd4318
+index 00000000..bf0e36c1
 --- /dev/null
 +++ b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,234 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
-+
++import RenderTexture from '../../textures/RenderTexture';
 +import { Point } from '../../math';
 +
 +/**
@@ -480,20 +2369,151 @@ index 00000000..83cd4318
 +        let spriteHeight = 0;
 +
 +        // Convert local coordinates to world coordinates
-+        const point = new Point(sprite.x,
-+            sprite.y);
-+        const globalPoint = sprite.parent.toGlobal(point);
++        const point = new Point(sprite.x, sprite.y);
 +
-+        // Calculate all attributes
++        const parentRenderedObject = (sprite.parent && sprite.parent.renderedObject) || this.renderer.context;
 +
-+        if (sprite.renderedObject)
++        if (texture instanceof RenderTexture) // render texture?
 +        {
++            if (texture._pxsceneRenderTarget)
++            {
++                const pxsceneRendererTarget = texture._pxsceneRenderTarget;
++
++                pxsceneRendererTarget.x = sprite.x;
++                pxsceneRendererTarget.y = sprite.y;
++                pxsceneRendererTarget.parent = sprite.parent;
++                pxsceneRendererTarget.scale = sprite.scale;
++                pxsceneRendererTarget.renderPXScene(this.renderer);
++            }
++        }
++        else if (!texture.noFrame) // frame data
++        {
++            let maskRect;
++
++            if (texture.trim)
++            {
++                maskRect = {
++                    x: texture.frame.x,
++                    y: texture.frame.y,
++                    w: texture.frame.width,
++                    h: texture.frame.height,
++                };
++            }
++            else
++            {
++                maskRect = {
++                    x: texture.frame.x,
++                    y: texture.frame.y,
++                    w: texture.orig.width,
++                    h: texture.orig.height,
++                };
++            }
++            // Calculate all attributes
++            if (sprite.renderedObject)
++            {
++                const renderedObject = sprite.renderedObject;
++
++                spriteWidth = maskRect.w;
++                spriteHeight = maskRect.h;
++
++                const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
++
++                renderedObject.x = attr.x;
++                renderedObject.y = attr.y;
++                renderedObject.cx = attr.cx;
++                renderedObject.cy = attr.cy;
++                renderedObject.a = attr.a;
++                renderedObject.r = attr.r;
++                renderedObject.sx = attr.sx;
++                renderedObject.sy = attr.sy;
++                renderedObject.w = spriteWidth;
++                renderedObject.h = spriteHeight;
++
++                const renderedObjectMask = sprite.renderedObjectMask;
++
++                renderedObjectMask.w = spriteWidth;
++                renderedObjectMask.h = spriteHeight;
++
++                const renderedObjectSprite = sprite.renderedObjectSprite;
++
++                renderedObjectSprite.x = -maskRect.x;
++                renderedObjectSprite.y = -maskRect.y;
++            }
++            else
++            {
++                const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
++
++                sprite.renderedObject = this.renderer.view.create({
++                    t: 'rect',
++                    parent: parentRenderedObject,
++                    x: attr.x,
++                    y: attr.y,
++                    cx: attr.cx,
++                    cy: attr.cy,
++                    a: attr.a,
++                    r: attr.r,
++                    sx: attr.sx,
++                    sy: attr.sy,
++                    w: maskRect.w,
++                    h: maskRect.h,
++                    fillColor: 0x0,
++                });
++
++                sprite.renderedObjectMask = this.renderer.view.create({
++                    t: 'rect',
++                    parent: sprite.renderedObject,
++                    x: 0,
++                    y: 0,
++                    cx: attr.cx,
++                    cy: attr.cy,
++                    w: maskRect.w,
++                    h: maskRect.h,
++                    fillColor: 0xFFFF00FF,
++                    mask: true,
++                    draw: false,
++                });
++
++                sprite.renderedObjectSprite = this.renderer.view.create({
++                    t: 'image',
++                    parent: sprite.renderedObject,
++                    x: -maskRect.x,
++                    y: -maskRect.y,
++                    cx: attr.cx,
++                    cy: attr.cy,
++                    url: texture.baseTexture.source.src,
++                });
++            }
++        }
++        else if (!sprite.textureDirty && sprite.renderedObject) // noFrame
++        {
++            innerRenderSprite.call(this);
++        }
++        else
++        {
++            if (sprite.renderedObject)
++            {
++                sprite.renderedObject.remove();
++            }
++
++            sprite.renderedObject = this.renderer.view.create({
++                t: 'image',
++                parent: parentRenderedObject,
++                url: texture.baseTexture.source.src,
++            });
++
++            innerRenderSprite.call(this);
++        }
++
++        function innerRenderSprite()
++        {
++            sprite.updateAttr();
++
 +            const renderedObject = sprite.renderedObject;
 +
 +            spriteWidth = renderedObject.resource.w;
 +            spriteHeight = renderedObject.resource.h;
 +
-+            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
++            const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
 +
 +            renderedObject.x = attr.x;
 +            renderedObject.y = attr.y;
@@ -504,51 +2524,26 @@ index 00000000..83cd4318
 +            renderedObject.sx = attr.sx;
 +            renderedObject.sy = attr.sy;
 +        }
-+        else
-+        {
-+            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
-+
-+            sprite.renderedObject = this.renderer.view.create({
-+                t: 'image',
-+                parent: this.renderer.context,
-+                x: attr.x,
-+                y: attr.y,
-+                cx: attr.cx,
-+                cy: attr.cy,
-+                a: attr.a,
-+                r: attr.r,
-+                sx: attr.sx,
-+                sy: attr.sy,
-+                url: texture.baseTexture.source.src,
-+            });
-+        }
 +    }
 +
 +    /**
 +     * Calculate sprite attribute.
 +     *
-+     * @param {Point} globalPoint - Global Point of the sprite
++     * @param {Point} point - Global Point of the sprite
 +     * @param {Number} spriteWidth - The width of the sprite
 +     * @param {Number} spriteHeight - The height of the sprite
 +     * @param {Object} sprite - The sprite object
 +     * @return {Object} The calculated attributes.
 +     * @private
 +     */
-+    _calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite)
++    _calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite)
 +    {
-+        const x = globalPoint.x - (spriteWidth * sprite.anchor.x);
-+        const y = globalPoint.y - (spriteHeight * sprite.anchor.y);
 +        const cx = spriteWidth * sprite.anchor.x;
 +        const cy = spriteHeight * sprite.anchor.y;
-+        const a = spriteWidth > 0 ? 1 : 0;
-+        const worldTransform = {
-+            skew: {},
-+            scale: {},
-+            position: {},
-+        };
-+
-+        sprite.transform.worldTransform.decompose(worldTransform);
-+        const r = worldTransform.rotation * (180 / Math.PI);
++        const x = point.x - cx;
++        const y = point.y - cy;
++        const a = sprite.alpha;
++        const r = sprite.rotation * (180 / Math.PI);
 +        const sx = sprite.scale.x;
 +        const sy = sprite.scale.y;
 +
@@ -1502,7 +3497,7 @@ index cec8c323..dcd2bfeb 100644
 +module.exports = Text;
 diff --git a/src/core/text/TextV8.js b/src/core/text/TextV8.js
 new file mode 100644
-index 00000000..225bd31f
+index 00000000..31394734
 --- /dev/null
 +++ b/src/core/text/TextV8.js
 @@ -0,0 +1,354 @@
@@ -1520,8 +3515,8 @@ index 00000000..225bd31f
 +// Map: font family name -> fontUrl
 +// Set key lowercase
 +const fontFamilyUrlMap = {
-+    dejavusans: 'http://www.pxscene.org/examples/px-reference/fonts/DejaVuSans.ttf',
-+    arial: 'http://www.pxscene.org/examples/px-reference/fonts/DejaVuSans.ttf',
++    dejavusans: 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/fonts/DejaVuSans.ttf',
++    arial: 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/fonts/DejaVuSans.ttf',
 +};
 +
 +/**
@@ -2975,8 +4970,27 @@ index 00000000..1fef811f
 +}
 +
 +PXSceneRenderer.registerPlugin('TextV8', PXSceneTextRenderer);
+diff --git a/src/core/textures/BaseRenderTexture.js b/src/core/textures/BaseRenderTexture.js
+index aa727f0f..d6226b37 100644
+--- a/src/core/textures/BaseRenderTexture.js
++++ b/src/core/textures/BaseRenderTexture.js
+@@ -80,6 +80,14 @@ export default class BaseRenderTexture extends BaseTexture
+         this._canvasRenderTarget = null;
+ 
+         /**
++         * A reference to the pxscene render target (we only need one as this can be shared across renderers)
++         *
++         * @private
++         * @member {object<number, WebGLTexture>}
++         */
++        this._pxsceneRenderTarget = null;
++
++        /**
+          * This will let the renderer know if the texture is valid. If it's not then it cannot be rendered.
+          *
+          * @member {boolean}
 diff --git a/src/core/textures/BaseTexture.js b/src/core/textures/BaseTexture.js
-index 71a992b5..d7abd3b0 100644
+index 71a992b5..a573be9c 100644
 --- a/src/core/textures/BaseTexture.js
 +++ b/src/core/textures/BaseTexture.js
 @@ -1,6 +1,6 @@
@@ -2987,6 +5001,15 @@ index 71a992b5..d7abd3b0 100644
  } from '../utils';
  import settings from '../settings';
  import EventEmitter from 'eventemitter3';
+@@ -584,7 +584,7 @@ export default class BaseTexture extends EventEmitter
+ 
+             this.imageUrl = null;
+ 
+-            if (!navigator.isCocoonJS)
++            if (!isV8() && !navigator.isCocoonJS)
+             {
+                 this.source.src = '';
+             }
 @@ -643,9 +643,9 @@ export default class BaseTexture extends EventEmitter
          {
              // new Image() breaks tex loading in some versions of Chrome.
@@ -3022,7 +5045,7 @@ index d5100756..2f1ccff8 100644
          /**
           * This will let a renderer know that a texture has been updated (used mainly for webGL uv updates)
 diff --git a/src/core/ticker/Ticker.js b/src/core/ticker/Ticker.js
-index d98a1f0d..8096f91d 100644
+index d98a1f0d..94726b94 100644
 --- a/src/core/ticker/Ticker.js
 +++ b/src/core/ticker/Ticker.js
 @@ -1,9 +1,85 @@
@@ -3098,7 +5121,7 @@ index d98a1f0d..8096f91d 100644
 +
 +    if (!cancelAnimationFrame)
 +    {
-+        cancelAnimationFrame = (id) => clearTimeout(id);
++        cancelAnimationFrame = (id) => clearInterval(id);
 +    }
 +}
 +else
@@ -3287,517 +5310,18 @@ index 2f9c71b7..b58a3439 100644
   * Returns sign of number
   *
   * @memberof PIXI.utils
-diff --git a/src/extras/AnimatedSpriteV8.js b/src/extras/AnimatedSpriteV8.js
-new file mode 100644
-index 00000000..7a937dd5
---- /dev/null
-+++ b/src/extras/AnimatedSpriteV8.js
-@@ -0,0 +1,298 @@
-+import * as core from '../core';
-+
-+/**
-+ * An AnimatedSprite is a simple way to display an animation depicted by a list of textures.
-+ *
-+ * This version could be only used in V8 environment. It is only used for loading sprite frames.
-+ *
-+ * @class
-+ * @extends PIXI.Sprite
-+ * @memberof PIXI.extras
-+ */
-+export default class AnimatedSpriteV8 extends core.Sprite
-+{
-+    /**
-+     * @param {PIXI.Texture} texture - the texture of the frames of that sprite.
-+     * @param {Array} frames - frame data
-+     * @param {boolean} [autoUpdate=true] - Whether use PIXI.ticker.shared to auto update animation time.
-+     */
-+    constructor(texture, frames, autoUpdate)
-+    {
-+        super(texture);
-+
-+        /**
-+         * @private
-+         */
-+        this._frames = frames;
-+
-+        /**
-+         * @private
-+         */
-+        this._durations = null;
-+
-+        /**
-+         * `true` uses PIXI.ticker.shared to auto update animation time.
-+         * @type {boolean}
-+         * @default true
-+         * @private
-+         */
-+        this._autoUpdate = autoUpdate !== false;
-+
-+        /**
-+         * The speed that the AnimatedSprite will play at. Higher is faster, lower is slower
-+         *
-+         * @member {number}
-+         * @default 1
-+         */
-+        this.animationSpeed = 1;
-+
-+        /**
-+         * Whether or not the animate sprite repeats after playing.
-+         *
-+         * @member {boolean}
-+         * @default true
-+         */
-+        this.loop = true;
-+
-+        /**
-+         * Function to call when a AnimatedSprite finishes playing
-+         *
-+         * @member {Function}
-+         */
-+        this.onComplete = null;
-+
-+        /**
-+         * Function to call when a AnimatedSprite changes which texture is being rendered
-+         *
-+         * @member {Function}
-+         */
-+        this.onFrameChange = null;
-+
-+        /**
-+         * Elapsed time since animation has been started, used internally to display current texture
-+         *
-+         * @member {number}
-+         * @private
-+         */
-+        this._currentTime = 0;
-+
-+        /**
-+         * Indicates if the AnimatedSprite is currently playing
-+         *
-+         * @member {boolean}
-+         * @readonly
-+         */
-+        this.playing = false;
-+
-+        /**
-+         * Plugin that is responsible for rendering this element.
-+         * Allows to customize the rendering process without overriding '_renderWebGL' & '_renderCanvas' methods.
-+         *
-+         * @member {string}
-+         * @default 'AnimatedSpriteV8'
-+         */
-+        this.pluginName = 'AnimatedSpriteV8';
-+    }
-+
-+    /**
-+     * Stops the AnimatedSprite
-+     *
-+     */
-+    stop()
-+    {
-+        if (!this.playing)
-+        {
-+            return;
-+        }
-+
-+        this.playing = false;
-+        if (this._autoUpdate)
-+        {
-+            core.ticker.shared.remove(this.update, this);
-+        }
-+    }
-+
-+    /**
-+     * Plays the AnimatedSprite
-+     *
-+     */
-+    play()
-+    {
-+        if (this.playing)
-+        {
-+            return;
-+        }
-+
-+        this.playing = true;
-+        if (this._autoUpdate)
-+        {
-+            core.ticker.shared.add(this.update, this);
-+        }
-+    }
-+
-+    /**
-+     * Stops the AnimatedSprite and goes to a specific frame
-+     *
-+     * @param {number} frameNumber - frame index to stop at
-+     */
-+    gotoAndStop(frameNumber)
-+    {
-+        this.stop();
-+
-+        const previousFrame = this.currentFrame;
-+
-+        this._currentTime = frameNumber;
-+
-+        if (previousFrame !== this.currentFrame)
-+        {
-+            this.exture();
-+        }
-+    }
-+
-+    /**
-+     * Goes to a specific frame and begins playing the AnimatedSprite
-+     *
-+     * @param {number} frameNumber - frame index to start at
-+     */
-+    gotoAndPlay(frameNumber)
-+    {
-+        const previousFrame = this.currentFrame;
-+
-+        this._currentTime = frameNumber;
-+
-+        if (previousFrame !== this.currentFrame)
-+        {
-+            this.updateTexture();
-+        }
-+
-+        this.play();
-+    }
-+
-+    /**
-+     * Updates the object transform for rendering.
-+     *
-+     * @private
-+     * @param {number} deltaTime - Time since last tick.
-+     */
-+    update(deltaTime)
-+    {
-+        const elapsed = this.animationSpeed * deltaTime;
-+        const previousFrame = this.currentFrame;
-+
-+        if (this._durations !== null)
-+        {
-+            let lag = this._currentTime % 1 * this._durations[this.currentFrame];
-+
-+            lag += elapsed / 60 * 1000;
-+
-+            while (lag < 0)
-+            {
-+                this._currentTime--;
-+                lag += this._durations[this.currentFrame];
-+            }
-+
-+            const sign = Math.sign(this.animationSpeed * deltaTime);
-+
-+            this._currentTime = Math.floor(this._currentTime);
-+
-+            while (lag >= this._durations[this.currentFrame])
-+            {
-+                lag -= this._durations[this.currentFrame] * sign;
-+                this._currentTime += sign;
-+            }
-+
-+            this._currentTime += lag / this._durations[this.currentFrame];
-+        }
-+        else
-+        {
-+            this._currentTime += elapsed;
-+        }
-+
-+        if (this._currentTime < 0 && !this.loop)
-+        {
-+            this.gotoAndStop(0);
-+
-+            if (this.onComplete)
-+            {
-+                this.onComplete();
-+            }
-+        }
-+        else if (this._currentTime >= this._frames.length && !this.loop)
-+        {
-+            this.gotoAndStop(this._frames.length - 1);
-+
-+            if (this.onComplete)
-+            {
-+                this.onComplete();
-+            }
-+        }
-+        else if (previousFrame !== this.currentFrame)
-+        {
-+            this.updateTexture();
-+        }
-+    }
-+
-+    /**
-+     * Updates the displayed texture to match the current frame index
-+     *
-+     * @private
-+     */
-+    updateTexture()
-+    {
-+        if (this.onFrameChange)
-+        {
-+            this.onFrameChange(this.currentFrame);
-+        }
-+    }
-+
-+    /**
-+     * Stops the AnimatedSprite and destroys it
-+     *
-+     */
-+    destroy()
-+    {
-+        this.stop();
-+        super.destroy();
-+    }
-+
-+    /**
-+     * totalFrames is the total number of frames in the AnimatedSprite. This is the same as number of textures
-+     * assigned to the AnimatedSprite.
-+     *
-+     * @readonly
-+     * @member {number}
-+     * @default 0
-+     */
-+    get totalFrames()
-+    {
-+        return this._frames.length;
-+    }
-+
-+    /**
-+     * The AnimatedSprites current frame index
-+     *
-+     * @member {number}
-+     * @readonly
-+     */
-+    get currentFrame()
-+    {
-+        let currentFrame = Math.floor(this._currentTime) % this._frames.length;
-+
-+        if (currentFrame < 0)
-+        {
-+            currentFrame += this._frames.length;
-+        }
-+
-+        return currentFrame;
-+    }
-+
-+    /**
-+     * Get the current frame data.
-+     *
-+     * @return {Object} Current frame data.
-+     */
-+    getCurrentFrameData()
-+    {
-+        return this._frames[this.currentFrame];
-+    }
-+}
 diff --git a/src/extras/index.js b/src/extras/index.js
-index bbd8bbf2..90199883 100644
+index bbd8bbf2..3ca7a923 100644
 --- a/src/extras/index.js
 +++ b/src/extras/index.js
-@@ -3,7 +3,10 @@
-  */
+@@ -4,6 +4,7 @@
  export { default as TextureTransform } from './TextureTransform';
  export { default as AnimatedSprite } from './AnimatedSprite';
-+export { default as AnimatedSpriteV8 } from './AnimatedSpriteV8';
-+export { default as PXSceneAnimatedSpriteRenderer } from './pxscene/PXSceneAnimatedSpriteRenderer';
  export { default as TilingSprite } from './TilingSprite';
 +export { default as PXSceneTilingSpriteRenderer } from './pxscene/PXSceneTilingSpriteRenderer';
  export { default as TilingSpriteRenderer } from './webgl/TilingSpriteRenderer';
  export { default as BitmapText } from './BitmapText';
  
-diff --git a/src/extras/pxscene/PXSceneAnimatedSpriteRenderer.js b/src/extras/pxscene/PXSceneAnimatedSpriteRenderer.js
-new file mode 100644
-index 00000000..9e906d52
---- /dev/null
-+++ b/src/extras/pxscene/PXSceneAnimatedSpriteRenderer.js
-@@ -0,0 +1,186 @@
-+import PXSceneRenderer from '../../core/renderers/pxscene/PXSceneRenderer';
-+
-+import { Point } from '../../core/math';
-+
-+/**
-+ * Renderer dedicated to drawing and batching sprites for PXScene.
-+ *
-+ * @class
-+ * @private
-+ * @memberof PIXI
-+ */
-+export default class PXSceneAnimatedSpriteRenderer
-+{
-+    /**
-+     * @param {PIXI.PXSceneRenderer} renderer -The renderer sprite this batch works for.
-+     */
-+    constructor(renderer)
-+    {
-+        this.renderer = renderer;
-+    }
-+
-+    /**
-+     * Renders the sprite object.
-+     *
-+     * @param {PIXI.Sprite} sprite - the sprite to render when using this spritebatch
-+     */
-+    render(sprite)
-+    {
-+        const texture = sprite._texture;
-+        let spriteWidth = 0;
-+        let spriteHeight = 0;
-+
-+        // Convert local coordinates to world coordinates
-+        const point = new Point(sprite.x,
-+            sprite.y);
-+        const globalPoint = sprite.parent.toGlobal(point);
-+        const frameData = sprite.getCurrentFrameData();
-+        let maskRect;
-+
-+        if (frameData.trimmed)
-+        {
-+            maskRect = {
-+                x: frameData.frame.x,
-+                y: frameData.frame.y,
-+                w: frameData.spriteSourceSize.w,
-+                h: frameData.spriteSourceSize.h,
-+            };
-+        }
-+        else
-+        {
-+            maskRect = {
-+                x: frameData.frame.x - frameData.spriteSourceSize.x,
-+                y: frameData.frame.y - frameData.spriteSourceSize.y,
-+                w: frameData.sourceSize.w,
-+                h: frameData.sourceSize.h,
-+            };
-+        }
-+
-+        // Calculate all attributes
-+        if (sprite.renderedObject)
-+        {
-+            const renderedObject = sprite.renderedObject;
-+
-+            spriteWidth = maskRect.w;
-+            spriteHeight = maskRect.h;
-+
-+            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
-+
-+            renderedObject.x = attr.x;
-+            renderedObject.y = attr.y;
-+            renderedObject.cx = attr.cx;
-+            renderedObject.cy = attr.cy;
-+            renderedObject.a = attr.a;
-+            renderedObject.r = attr.r;
-+            renderedObject.sx = attr.sx;
-+            renderedObject.sy = attr.sy;
-+            renderedObject.w = spriteWidth;
-+            renderedObject.h = spriteHeight;
-+
-+            const renderedObjectMask = sprite.renderedObjectMask;
-+
-+            renderedObjectMask.w = spriteWidth;
-+            renderedObjectMask.h = spriteHeight;
-+
-+            const renderedObjectSprite = sprite.renderedObjectSprite;
-+
-+            renderedObjectSprite.x = -maskRect.x;
-+            renderedObjectSprite.y = -maskRect.y;
-+        }
-+        else
-+        {
-+            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
-+
-+            sprite.renderedObject = this.renderer.view.create({
-+                t: 'rect',
-+                parent: this.renderer.context,
-+                x: attr.x,
-+                y: attr.y,
-+                cx: attr.cx,
-+                cy: attr.cy,
-+                a: attr.a,
-+                r: attr.r,
-+                sx: attr.sx,
-+                sy: attr.sy,
-+                w: maskRect.w,
-+                h: maskRect.h,
-+                fillColor: 0x0,
-+            });
-+
-+            sprite.renderedObjectMask = this.renderer.view.create({
-+                t: 'rect',
-+                parent: sprite.renderedObject,
-+                x: 0,
-+                y: 0,
-+                cx: attr.cx,
-+                cy: attr.cy,
-+                w: maskRect.w,
-+                h: maskRect.h,
-+                fillColor: 0xFFFF00FF,
-+                mask: true,
-+                draw: false,
-+            });
-+
-+            sprite.renderedObjectSprite = this.renderer.view.create({
-+                t: 'image',
-+                parent: sprite.renderedObject,
-+                x: -maskRect.x,
-+                y: -maskRect.y,
-+                cx: attr.cx,
-+                cy: attr.cy,
-+                url: texture.baseTexture.source.src,
-+            });
-+        }
-+    }
-+
-+    /**
-+     * Calculate sprite attribute.
-+     *
-+     * @param {Point} globalPoint - Global Point of the sprite
-+     * @param {Number} spriteWidth - The width of the sprite
-+     * @param {Number} spriteHeight - The height of the sprite
-+     * @param {Object} sprite - The sprite object
-+     * @return {Object} The calculated attributes.
-+     * @private
-+     */
-+    _calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite)
-+    {
-+        const x = globalPoint.x - (spriteWidth * sprite.anchor.x);
-+        const y = globalPoint.y - (spriteHeight * sprite.anchor.y);
-+        const cx = spriteWidth * sprite.anchor.x;
-+        const cy = spriteHeight * sprite.anchor.y;
-+        const a = spriteWidth > 0 ? 1 : 0;
-+        const worldTransform = {
-+            skew: {},
-+            scale: {},
-+            position: {},
-+        };
-+
-+        sprite.transform.worldTransform.decompose(worldTransform);
-+        const r = worldTransform.rotation * (180 / Math.PI);
-+        const sx = sprite.scale.x;
-+        const sy = sprite.scale.y;
-+
-+        return {
-+            x,
-+            y,
-+            cx,
-+            cy,
-+            a,
-+            r,
-+            sx,
-+            sy,
-+        };
-+    }
-+
-+    /**
-+     * destroy the sprite object.
-+     *
-+     */
-+    destroy()
-+    {
-+        this.renderer = null;
-+    }
-+}
-+
-+PXSceneRenderer.registerPlugin('AnimatedSpriteV8', PXSceneAnimatedSpriteRenderer);
 diff --git a/src/extras/pxscene/PXSceneTilingSpriteRenderer.js b/src/extras/pxscene/PXSceneTilingSpriteRenderer.js
 new file mode 100644
 index 00000000..b7b54a5b
@@ -3960,7 +5484,7 @@ index 00000000..b7b54a5b
 +
 +PXSceneRenderer.registerPlugin('tilingSprite', PXSceneTilingSpriteRenderer);
 diff --git a/src/interaction/InteractionManager.js b/src/interaction/InteractionManager.js
-index ac742252..e02e0ac1 100644
+index ac742252..331dc83b 100644
 --- a/src/interaction/InteractionManager.js
 +++ b/src/interaction/InteractionManager.js
 @@ -4,6 +4,7 @@ import InteractionEvent from './InteractionEvent';
@@ -4276,6 +5800,15 @@ index ac742252..e02e0ac1 100644
  
              const interactive = event.pointerType === 'touch' ? this.moveWhenInside : true;
  
+@@ -1285,7 +1326,7 @@ export default class InteractionManager extends EventEmitter
+ 
+         if (trackingData === undefined) return;
+ 
+-        if (hit && this.mouseOverRenderer)
++        if (hit && (isV8() || this.mouseOverRenderer))
+         {
+             if (!trackingData.over)
+             {
 @@ -1410,7 +1451,7 @@ export default class InteractionManager extends EventEmitter
          // This is the way InteractionManager processed touch events before the refactoring, so I've kept
          // it here. But it doesn't make that much sense to me, since mapPositionToPoint already factors
@@ -4342,11 +5875,46 @@ index ac742252..e02e0ac1 100644
  core.WebGLRenderer.registerPlugin('interaction', InteractionManager);
  core.CanvasRenderer.registerPlugin('interaction', InteractionManager);
 +core.PXSceneRenderer.registerPlugin('interaction', InteractionManager);
+diff --git a/src/loaders/bitmapFontParser.js b/src/loaders/browser/bitmapFontParser.js
+similarity index 97%
+rename from src/loaders/bitmapFontParser.js
+rename to src/loaders/browser/bitmapFontParser.js
+index f4cf9967..8199c48a 100644
+--- a/src/loaders/bitmapFontParser.js
++++ b/src/loaders/browser/bitmapFontParser.js
+@@ -1,7 +1,7 @@
+ import * as path from 'path';
+-import { utils } from '../core';
++import { utils } from '../../core';
+ import { Resource } from 'resource-loader';
+-import { BitmapText } from '../extras';
++import { BitmapText } from '../../extras';
+ 
+ /**
+  * Register a BitmapText font from loader resource.
+diff --git a/src/loaders/loader.js b/src/loaders/browser/loader.js
+similarity index 95%
+rename from src/loaders/loader.js
+rename to src/loaders/browser/loader.js
+index 0a670cb8..807a4c74 100644
+--- a/src/loaders/loader.js
++++ b/src/loaders/browser/loader.js
+@@ -1,8 +1,8 @@
+ import ResourceLoader from 'resource-loader';
+ import { blobMiddlewareFactory } from 'resource-loader/lib/middlewares/parsing/blob';
+ import EventEmitter from 'eventemitter3';
+-import textureParser from './textureParser';
+-import spritesheetParser from './spritesheetParser';
++import textureParser from '../utils/textureParser';
++import spritesheetParser from '../utils/spritesheetParser';
+ import bitmapFontParser from './bitmapFontParser';
+ 
+ /**
 diff --git a/src/loaders/index.js b/src/loaders/index.js
-index 51897931..902ebab2 100644
+index 51897931..d13c8d60 100644
 --- a/src/loaders/index.js
 +++ b/src/loaders/index.js
-@@ -1,15 +1,37 @@
+@@ -1,15 +1,43 @@
  /**
 - * @namespace PIXI.loaders
 - */
@@ -4367,22 +5935,28 @@ index 51897931..902ebab2 100644
 +/**
 + * @namespace PIXI.loaders
 + */
++
++const spritesheetParser = require('./utils/spritesheetParser'); // eslint-disable-line global-require
++const textureParser = require('./utils/textureParser'); // eslint-disable-line global-require
++
 +if (isV8())
 +{
-+    const Loader = require('./LoaderV8').default; // eslint-disable-line global-require
++    const Resource = require('./pxscene/resource').default; // eslint-disable-line global-require
++    const Loader = require('./pxscene/loader').default; // eslint-disable-line global-require
 +
 +    module.exports = {
++        Resource,
 +        Loader,
++        // spritesheetParser,
++        // textureParser,
 +    };
 +}
 +else
 +{
 +    const Resource = require('resource-loader'); // eslint-disable-line global-require
-+    const Loader = require('./loader').default; // eslint-disable-line global-require
-+    const bitmapFontParser = require('./bitmapFontParser').default; // eslint-disable-line global-require
-+    const parseBitmapFontData = require('./bitmapFontParser').parse; // eslint-disable-line global-require
-+    const spritesheetParser = require('./spritesheetParser'); // eslint-disable-line global-require
-+    const textureParser = require('./textureParser'); // eslint-disable-line global-require
++    const Loader = require('./browser/loader').default; // eslint-disable-line global-require
++    const bitmapFontParser = require('./browser/bitmapFontParser').default; // eslint-disable-line global-require
++    const parseBitmapFontData = require('./browser/bitmapFontParser').parse; // eslint-disable-line global-require
 +
 +    module.exports = {
 +        Resource,
@@ -4393,156 +5967,1481 @@ index 51897931..902ebab2 100644
 +        textureParser,
 +    };
 +}
-diff --git a/src/loaders/loaderV8.js b/src/loaders/loaderV8.js
+diff --git a/src/loaders/pxscene/loader.js b/src/loaders/pxscene/loader.js
 new file mode 100644
-index 00000000..8ecf383f
+index 00000000..1125a573
 --- /dev/null
-+++ b/src/loaders/loaderV8.js
-@@ -0,0 +1,144 @@
-+import { Sprite } from '../core';
++++ b/src/loaders/pxscene/loader.js
+@@ -0,0 +1,661 @@
++// Remove document dependencies for resource-loader/src/Loader.js
++import Signal from 'mini-signals';
++import parseUri from 'parse-uri';
++import * as async from 'resource-loader/lib/async';
++import Resource from './resource';
++
++import EventEmitter from 'eventemitter3';
++import textureParser from '../utils/textureParser';
++import spritesheetParser from '../utils/spritesheetParser';
++
++// some constants
++const MAX_PROGRESS = 100;
++const rgxExtractUrlHash = /(#[\w-]+)?$/;
 +
 +/**
 + *
-+ * The new loader for loading spriteFrames in V8
++ * The new loader, extends Resource Loader by Chad Engler : https://github.com/englercj/resource-loader
 + *
-+ * Only support adding sprite frames
++ * ```js
++ * let loader = PIXI.loader; // pixi exposes a premade instance for you to use.
++ * //or
++ * let loader = new PIXI.loaders.Loader(); // you can also create your own if you want
++ *
++ * loader.add('bunny', 'data/bunny.png');
++ * loader.add('spaceship', 'assets/spritesheet.json');
++ * loader.add('scoreFont', 'assets/score.fnt');
++ *
++ * loader.once('complete',onAssetsLoaded);
++ *
++ * loader.load();
++ * ```
 + *
 + * @class
 + * @memberof PIXI.loaders
 + */
-+export default class LoaderV8
++export default class Loader
 +{
 +    /**
-+     * Constructor
++     * Initialize the object.
++     *
++     * @param {object} [appSceneContext] - The app scene context of the pxscene
++     * @param {string} [baseUrl=''] - The base url for all resources loaded by this loader.
++     * @param {number} [concurrency=10] - The number of resources to load concurrently.
 +     */
-+    constructor()
++    constructor(appSceneContext, baseUrl = '', concurrency = 10)
 +    {
 +        /**
-+         * Cached sprite frame resources
++         * The app scene context of pxscene
 +         *
-+         * Key: path
-+         * Value: {
-+         *    texture,
-+         *    meta,
-+         * }
-+         * @type {{}}
++         * @type {Object}
 +         */
-+        this.spriteFrameResources = {};
-+        this.fs = null;
-+        this.http = null;
++        this.appSceneContext = appSceneContext;
++
++        /**
++         * The base url for all resources loaded by this loader.
++         *
++         * @member {string}
++         */
++        this.baseUrl = baseUrl;
++
++        /**
++         * The progress percent of the loader going through the queue.
++         *
++         * @member {number}
++         */
++        this.progress = 0;
++
++        /**
++         * Loading state of the loader, true if it is currently loading resources.
++         *
++         * @member {boolean}
++         */
++        this.loading = false;
++
++        /**
++         * A querystring to append to every URL added to the loader.
++         *
++         * This should be a valid query string *without* the question-mark (`?`). The loader will
++         * also *not* escape values for you. Make sure to escape your parameters with
++         * [`encodeURIComponent`](https://mdn.io/encodeURIComponent) before assigning this property.
++         *
++         * @example
++         *
++         * ```js
++         * const loader = new Loader();
++         *
++         * loader.defaultQueryString = 'user=me&password=secret';
++         *
++         * // This will request 'image.png?user=me&password=secret'
++         * loader.add('image.png').load();
++         *
++         * loader.reset();
++         *
++         * // This will request 'image.png?v=1&user=me&password=secret'
++         * loader.add('iamge.png?v=1').load();
++         * ```
++         */
++        this.defaultQueryString = '';
++
++        /**
++         * The middleware to run before loading each resource.
++         *
++         * @member {function[]}
++         */
++        this._beforeMiddleware = [];
++
++        /**
++         * The middleware to run after loading each resource.
++         *
++         * @member {function[]}
++         */
++        this._afterMiddleware = [];
++
++        /**
++         * The tracks the resources we are currently completing parsing for.
++         *
++         * @member {Resource[]}
++         */
++        this._resourcesParsing = [];
++
++        /**
++         * The `_loadResource` function bound with this object context.
++         *
++         * @private
++         * @member {function}
++         * @param {Resource} r - The resource to load
++         * @param {Function} d - The dequeue function
++         * @return {undefined}
++         */
++        this._boundLoadResource = (r, d) => this._loadResource(r, d);
++
++        /**
++         * The resources waiting to be loaded.
++         *
++         * @private
++         * @member {Resource[]}
++         */
++        this._queue = async.queue(this._boundLoadResource, concurrency);
++
++        this._queue.pause();
++
++        /**
++         * All the resources for this loader keyed by name.
++         *
++         * @member {object<string, Resource>}
++         */
++        this.resources = {};
++
++        /**
++         * Dispatched once per loaded or errored resource.
++         *
++         * The callback looks like {@link Loader.OnProgressSignal}.
++         *
++         * @member {Signal}
++         */
++        this.onProgress = new Signal();
++
++        /**
++         * Dispatched once per errored resource.
++         *
++         * The callback looks like {@link Loader.OnErrorSignal}.
++         *
++         * @member {Signal}
++         */
++        this.onError = new Signal();
++
++        /**
++         * Dispatched once per loaded resource.
++         *
++         * The callback looks like {@link Loader.OnLoadSignal}.
++         *
++         * @member {Signal}
++         */
++        this.onLoad = new Signal();
++
++        /**
++         * Dispatched when the loader begins to process the queue.
++         *
++         * The callback looks like {@link Loader.OnStartSignal}.
++         *
++         * @member {Signal}
++         */
++        this.onStart = new Signal();
++
++        /**
++         * Dispatched when the queued resources all load.
++         *
++         * The callback looks like {@link Loader.OnCompleteSignal}.
++         *
++         * @member {Signal}
++         */
++        this.onComplete = new Signal();
++
++        // The following code is from browser/loader.js
++        EventEmitter.call(this);
++
++        for (let i = 0; i < Loader._pixiMiddleware.length; ++i)
++        {
++            this.use(Loader._pixiMiddleware[i]());
++        }
++
++        // Compat layer, translate the new v2 signals into old v1 events.
++        this.onStart.add((l) => this.emit('start', l));
++        this.onProgress.add((l, r) => this.emit('progress', l, r));
++        this.onError.add((e, l, r) => this.emit('error', e, l, r));
++        this.onLoad.add((l, r) => this.emit('load', l, r));
++        this.onComplete.add((l, r) => this.emit('complete', l, r));
 +    }
 +
 +    /**
-+     * Add sprite frames.
++     * Initialize the app scene context.
 +     *
-+     * @param {String} jsonPath - json path of the sprite frames
-+     * @param {Object} fs - Nodejs fs module
-+     * @param {Object} http - Nodejs http module
-+     * @param {Object} url - Nodejs url module
-+     * @returns {LoaderV8} Current object.
++     * @param {object} [appSceneContext] - The app scene context of the pxscene
++     * @return {Loader} Returns itself.
 +     */
-+    add(jsonPath, fs, http, url)
++    initAppSceneContext(appSceneContext)
 +    {
-+        this.jsonPath = jsonPath;
-+        this.fs = fs;
-+        this.http = http;
-+        this.url = url;
++        this.appSceneContext = appSceneContext;
 +
 +        return this;
 +    }
 +
 +    /**
-+     * Load resource
++     * Adds a resource (or multiple resources) to the loader queue.
 +     *
-+     * @param {Function} func - callback function after loading complete.
++     * This function can take a wide variety of different parameters. The only thing that is always
++     * required the url to load. All the following will work:
++     *
++     * ```js
++     * loader
++     *     // normal param syntax
++     *     .add('key', 'http://...', function () {})
++     *     .add('http://...', function () {})
++     *     .add('http://...')
++     *
++     *     // object syntax
++     *     .add({
++     *         name: 'key2',
++     *         url: 'http://...'
++     *     }, function () {})
++     *     .add({
++     *         url: 'http://...'
++     *     }, function () {})
++     *     .add({
++     *         name: 'key3',
++     *         url: 'http://...'
++     *         onComplete: function () {}
++     *     })
++     *     .add({
++     *         url: 'https://...',
++     *         onComplete: function () {},
++     *         crossOrigin: true
++     *     })
++     *
++     *     // you can also pass an array of objects or urls or both
++     *     .add([
++     *         { name: 'key4', url: 'http://...', onComplete: function () {} },
++     *         { url: 'http://...', onComplete: function () {} },
++     *         'http://...'
++     *     ])
++     *
++     *     // and you can use both params and options
++     *     .add('key', 'http://...', { crossOrigin: true }, function () {})
++     *     .add('http://...', { crossOrigin: true }, function () {});
++     * ```
++     *
++     * @param {string} [name] - The name of the resource to load, if not passed the url is used.
++     * @param {string} [url] - The url for this resource, relative to the baseUrl of this loader.
++     * @param {object} [options] - The options for the load.
++     * @param {boolean} [options.crossOrigin] - Is this request cross-origin? Default is to determine automatically.
++     * @param {Resource.LOAD_TYPE} [options.loadType=Resource.LOAD_TYPE.XHR] - How should this resource be loaded?
++     * @param {Resource.XHR_RESPONSE_TYPE} [options.xhrType=Resource.XHR_RESPONSE_TYPE.DEFAULT] - How should
++     *      the data being loaded be interpreted when using XHR?
++     * @param {object} [options.metadata] - Extra configuration for middleware and the Resource object.
++     * @param {HTMLImageElement|HTMLAudioElement|HTMLVideoElement} [options.metadata.loadElement=null] - The
++     *      element to use for loading, instead of creating one.
++     * @param {boolean} [options.metadata.skipSource=false] - Skips adding source(s) to the load element. This
++     *      is useful if you want to pass in a `loadElement` that you already added load sources to.
++     * @param {function} [cb] - Function to call when this specific resource completes loading.
++     * @return {Loader} Returns itself.
 +     */
-+    load(func)
++    add(name, url, options, cb)
 +    {
-+        if (!func)
++        // special case of an array of objects or urls
++        if (Array.isArray(name))
++        {
++            for (let i = 0; i < name.length; ++i)
++            {
++                this.add(name[i]);
++            }
++
++            return this;
++        }
++
++        // if an object is passed instead of params
++        if (typeof name === 'object')
++        {
++            cb = url || name.callback || name.onComplete;
++            options = name;
++            url = name.url;
++            name = name.name || name.key || name.url;
++        }
++
++        // case where no name is passed shift all args over by one.
++        if (typeof url !== 'string')
++        {
++            cb = options;
++            options = url;
++            url = name;
++        }
++
++        // now that we shifted make sure we have a proper url.
++        if (typeof url !== 'string')
++        {
++            throw new Error('No url passed to add resource to loader.');
++        }
++
++        // options are optional so people might pass a function and no options
++        if (typeof options === 'function')
++        {
++            cb = options;
++            options = null;
++        }
++
++        // if loading already you can only add resources that have a parent.
++        if (this.loading && (!options || !options.parentResource))
++        {
++            throw new Error('Cannot add resources while the loader is running.');
++        }
++
++        // check if resource already exists.
++        if (this.resources[name])
++        {
++            throw new Error(`Resource named "${name}" already exists.`);
++        }
++
++        // add base url if this isn't an absolute url
++        url = this._prepareUrl(url);
++
++        // create the store the resource
++        this.resources[name] = new Resource(this.appSceneContext, name, url, options);
++
++        if (typeof cb === 'function')
++        {
++            this.resources[name].onAfterMiddleware.once(cb);
++        }
++
++        // if actively loading, make sure to adjust progress chunks for that parent and its children
++        if (this.loading)
++        {
++            const parent = options.parentResource;
++            const incompleteChildren = [];
++
++            for (let i = 0; i < parent.children.length; ++i)
++            {
++                if (!parent.children[i].isComplete)
++                {
++                    incompleteChildren.push(parent.children[i]);
++                }
++            }
++
++            const fullChunk = parent.progressChunk * (incompleteChildren.length + 1); // +1 for parent
++            const eachChunk = fullChunk / (incompleteChildren.length + 2); // +2 for parent & new child
++
++            parent.children.push(this.resources[name]);
++            parent.progressChunk = eachChunk;
++
++            for (let i = 0; i < incompleteChildren.length; ++i)
++            {
++                incompleteChildren[i].progressChunk = eachChunk;
++            }
++
++            this.resources[name].progressChunk = eachChunk;
++        }
++
++        // add the resource to the queue
++        this._queue.push(this.resources[name]);
++
++        return this;
++    }
++
++    /**
++     * Sets up a middleware function that will run *before* the
++     * resource is loaded.
++     *
++     * @method before
++     * @param {function} fn - The middleware function to register.
++     * @return {Loader} Returns itself.
++     */
++    pre(fn)
++    {
++        this._beforeMiddleware.push(fn);
++
++        return this;
++    }
++
++    /**
++     * Sets up a middleware function that will run *after* the
++     * resource is loaded.
++     *
++     * @alias use
++     * @method after
++     * @param {function} fn - The middleware function to register.
++     * @return {Loader} Returns itself.
++     */
++    use(fn)
++    {
++        this._afterMiddleware.push(fn);
++
++        return this;
++    }
++
++    /**
++     * Resets the queue of the loader to prepare for a new load.
++     *
++     * @return {Loader} Returns itself.
++     */
++    reset()
++    {
++        this.progress = 0;
++        this.loading = false;
++
++        this._queue.kill();
++        this._queue.pause();
++
++        // abort all resource loads
++        for (const k in this.resources)
++        {
++            const res = this.resources[k];
++
++            if (res.onLoadBinding)
++            {
++                res.onLoadBinding.detach();
++            }
++
++            if (res.isLoading)
++            {
++                res.abort();
++            }
++        }
++
++        this.resources = {};
++
++        return this;
++    }
++
++    /**
++     * Starts loading the queued resources.
++     *
++     * @param {function} [cb] - Optional callback that will be bound to the `complete` event.
++     * @return {Loader} Returns itself.
++     */
++    load(cb)
++    {
++        // register complete callback if they pass one
++        if (typeof cb === 'function')
++        {
++            this.onComplete.once(cb);
++        }
++
++        // if the queue has already started we are done here
++        if (this.loading)
++        {
++            return this;
++        }
++
++        // distribute progress chunks
++        const chunk = 100 / this._queue._tasks.length;
++
++        for (let i = 0; i < this._queue._tasks.length; ++i)
++        {
++            this._queue._tasks[i].data.progressChunk = chunk;
++        }
++
++        // update loading state
++        this.loading = true;
++
++        // notify of start
++        this.onStart.dispatch(this);
++
++        // start loading
++        this._queue.resume();
++
++        return this;
++    }
++
++    /**
++     * Prepares a url for usage based on the configuration of this object
++     *
++     * @private
++     * @param {string} url - The url to prepare.
++     * @return {string} The prepared url.
++     */
++    _prepareUrl(url)
++    {
++        const parsedUrl = parseUri(url, { strictMode: true });
++        let result;
++
++        // absolute url, just use it as is.
++        if (parsedUrl.protocol || !parsedUrl.path || url.indexOf('//') === 0)
++        {
++            result = url;
++        }
++        // if baseUrl doesn't end in slash and url doesn't start with slash, then add a slash inbetween
++        else if (this.baseUrl.length
++            && this.baseUrl.lastIndexOf('/') !== this.baseUrl.length - 1
++            && url.charAt(0) !== '/'
++        )
++        {
++            result = `${this.baseUrl}/${url}`;
++        }
++        else
++        {
++            result = this.baseUrl + url;
++        }
++
++        // if we need to add a default querystring, there is a bit more work
++        if (this.defaultQueryString)
++        {
++            const hash = rgxExtractUrlHash.exec(result)[0];
++
++            result = result.substr(0, result.length - hash.length);
++
++            if (result.indexOf('?') !== -1)
++            {
++                result += `&${this.defaultQueryString}`;
++            }
++            else
++            {
++                result += `?${this.defaultQueryString}`;
++            }
++
++            result += hash;
++        }
++
++        return result;
++    }
++
++    /**
++     * Loads a single resource.
++     *
++     * @private
++     * @param {Resource} resource - The resource to load.
++     * @param {function} dequeue - The function to call when we need to dequeue this item.
++     */
++    _loadResource(resource, dequeue)
++    {
++        resource._dequeue = dequeue;
++
++        // run before middleware
++        async.eachSeries(
++            this._beforeMiddleware,
++            (fn, next) =>
++            {
++                fn.call(this, resource, () =>
++                {
++                    // if the before middleware marks the resource as complete,
++                    // break and don't process any more before middleware
++                    next(resource.isComplete ? {} : null);
++                });
++            },
++            () =>
++            {
++                if (resource.isComplete)
++                {
++                    this._onLoad(resource);
++                }
++                else
++                {
++                    resource.onLoadBinding = resource.onComplete.once(this._onLoad, this);
++                    resource.load();
++                }
++            }
++        );
++    }
++
++    /**
++     * Called once each resource has loaded.
++     *
++     * @private
++     */
++    _onComplete()
++    {
++        this.loading = false;
++
++        this.onComplete.dispatch(this, this.resources);
++    }
++
++    /**
++     * Called each time a resources is loaded.
++     *
++     * @private
++     * @param {Resource} resource - The resource that was loaded
++     */
++    _onLoad(resource)
++    {
++        resource.onLoadBinding = null;
++
++        // remove this resource from the async queue, and add it to our list of resources that are being parsed
++        resource._dequeue();
++        this._resourcesParsing.push(resource);
++
++        // run middleware, this *must* happen before dequeue so sub-assets get added properly
++        async.eachSeries(
++            this._afterMiddleware,
++            (fn, next) =>
++            {
++                fn.call(this, resource, next);
++            },
++            () =>
++            {
++                resource.onAfterMiddleware.dispatch(resource);
++
++                this.progress += resource.progressChunk;
++                this.onProgress.dispatch(this, resource);
++
++                if (resource.error)
++                {
++                    this.onError.dispatch(resource.error, this, resource);
++                }
++                else
++                {
++                    this.onLoad.dispatch(this, resource);
++                }
++
++                this._resourcesParsing.splice(this._resourcesParsing.indexOf(resource), 1);
++
++                // do completion check
++                if (this._queue.idle() && this._resourcesParsing.length === 0)
++                {
++                    this.progress = MAX_PROGRESS;
++                    this._onComplete();
++                }
++            }
++        );
++    }
++
++    /**
++     * Adds a default middleware to the pixi loader.
++     *
++     * @static
++     * @param {Function} fn - The middleware to add.
++     */
++    static addPixiMiddleware(fn)
++    {
++        Loader._pixiMiddleware.push(fn);
++    }
++}
++
++// Copy EE3 prototype (mixin)
++for (const k in EventEmitter.prototype)
++{
++    Loader.prototype[k] = EventEmitter.prototype[k];
++}
++
++Loader._pixiMiddleware = [
++    // parse any Image objects into textures
++    textureParser,
++    // parse any spritesheet data into multiple textures
++    spritesheetParser,
++];
+diff --git a/src/loaders/pxscene/resource.js b/src/loaders/pxscene/resource.js
+new file mode 100644
+index 00000000..605c09a3
+--- /dev/null
++++ b/src/loaders/pxscene/resource.js
+@@ -0,0 +1,748 @@
++import Signal from 'mini-signals';
++
++// noop
++function _noop() { /* empty */ }
++
++/**
++ * Manages the state and loading of a resource and all child resources.
++ *
++ * @class
++ */
++export default class Resource
++{
++    /**
++     * Sets the load type to be used for a specific extension.
++     *
++     * @static
++     * @param {string} extname - The extension to set the type for, e.g. "png" or "fnt"
++     * @param {Resource.LOAD_TYPE} loadType - The load type to set it to.
++     */
++    static setExtensionLoadType(extname, loadType)
++    {
++        setExtMap(Resource._loadTypeMap, extname, loadType);
++    }
++
++    /**
++     * Sets the load type to be used for a specific extension.
++     *
++     * @static
++     * @param {string} extname - The extension to set the type for, e.g. "png" or "fnt"
++     * @param {Resource.XHR_RESPONSE_TYPE} xhrType - The xhr type to set it to.
++     */
++    static setExtensionXhrType(extname, xhrType)
++    {
++        setExtMap(Resource._xhrTypeMap, extname, xhrType);
++    }
++
++    /**
++     * @param {object} [appSceneContext] - The app scene context of the pxscene
++     * @param {string} name - The name of the resource to load.
++     * @param {string|string[]} url - The url for this resource, for audio/video loads you can pass
++     *      an array of sources.
++     * @param {object} [options] - The options for the load.
++     * @param {Resource.LOAD_TYPE} [options.loadType=Resource.LOAD_TYPE.XHR] - How should this resource
++     *      be loaded?
++     * @param {Resource.XHR_RESPONSE_TYPE} [options.xhrType=Resource.XHR_RESPONSE_TYPE.DEFAULT] - How
++     *      should the data being loaded be interpreted when using XHR?
++     * @param {object} [options.metadata] - Extra configuration for middleware and the Resource object.
++     * @param {HTMLImageElement|HTMLAudioElement|HTMLVideoElement} [options.metadata.loadElement=null] - The
++     *      element to use for loading, instead of creating one.
++     * @param {boolean} [options.metadata.skipSource=false] - Skips adding source(s) to the load element. This
++     *      is useful if you want to pass in a `loadElement` that you already added load sources to.
++     */
++    constructor(appSceneContext, name, url, options)
++    {
++        if (typeof name !== 'string' || typeof url !== 'string')
++        {
++            throw new Error('Both name and url are required for constructing a resource.');
++        }
++
++        options = options || {};
++
++        /**
++         * The app scene context of pxscene
++         *
++         * @type {Object}
++         */
++        this.appSceneContext = appSceneContext;
++
++        /**
++         * The state flags of this resource.
++         *
++         * @member {number}
++         */
++        this._flags = 0;
++
++        // set data url flag, needs to be set early for some _determineX checks to work.
++        this._setFlag(Resource.STATUS_FLAGS.DATA_URL, url.indexOf('data:') === 0);
++
++        /**
++         * The name of this resource.
++         *
++         * @member {string}
++         * @readonly
++         */
++        this.name = name;
++
++        /**
++         * The url used to load this resource.
++         *
++         * @member {string}
++         * @readonly
++         */
++        this.url = url;
++
++        /**
++         * The extension used to load this resource.
++         *
++         * @member {string}
++         * @readonly
++         */
++        this.extension = this._getExtension();
++
++        /**
++         * The data that was loaded by the resource.
++         *
++         * @member {any}
++         */
++        this.data = null;
++
++        /**
++         * Response text from getting file.
++         * @type {undefined}
++         */
++        this.responseText = undefined;
++
++        /**
++         * The method of loading to use for this resource.
++         *
++         * @member {Resource.LOAD_TYPE}
++         */
++        this.loadType = options.loadType || this._determineLoadType();
++
++        /**
++         * The type used to load the resource via XHR. If unset, determined automatically.
++         *
++         * @member {string}
++         */
++        this.xhrType = options.xhrType;
++
++        /**
++         * Extra info for middleware, and controlling specifics about how the resource loads.
++         *
++         * Note that if you pass in a `loadElement`, the Resource class takes ownership of it.
++         * Meaning it will modify it as it sees fit.
++         *
++         * @member {object}
++         * @property {HTMLImageElement|HTMLAudioElement|HTMLVideoElement} [loadElement=null] - The
++         *  element to use for loading, instead of creating one.
++         * @property {boolean} [skipSource=false] - Skips adding source(s) to the load element. This
++         *  is useful if you want to pass in a `loadElement` that you already added load sources
++         *  to.
++         */
++        this.metadata = options.metadata || {};
++
++        /**
++         * The error that occurred while loading (if any).
++         *
++         * @member {Error}
++         * @readonly
++         */
++        this.error = null;
++
++        /**
++         * The XHR object that was used to load this resource. This is only set
++         * when `loadType` is `Resource.LOAD_TYPE.XHR`.
++         *
++         * @member {XMLHttpRequest}
++         * @readonly
++         */
++        this.xhr = null;
++
++        /**
++         * The child resources this resource owns.
++         *
++         * @member {Resource[]}
++         * @readonly
++         */
++        this.children = [];
++
++        /**
++         * The resource type.
++         *
++         * @member {Resource.TYPE}
++         * @readonly
++         */
++        this.type = Resource.TYPE.UNKNOWN;
++
++        /**
++         * The progress chunk owned by this resource.
++         *
++         * @member {number}
++         * @readonly
++         */
++        this.progressChunk = 0;
++
++        /**
++         * The `dequeue` method that will be used a storage place for the async queue dequeue method
++         * used privately by the loader.
++         *
++         * @private
++         * @member {function}
++         */
++        this._dequeue = _noop;
++
++        /**
++         * Used a storage place for the on load binding used privately by the loader.
++         *
++         * @private
++         * @member {function}
++         */
++        this.onLoadBinding = null;
++
++        /**
++         * Dispatched when the resource beings to load.
++         *
++         * The callback looks like {@link Resource.OnStartSignal}.
++         *
++         * @member {Signal}
++         */
++        this.onStart = new Signal();
++
++        /**
++         * Dispatched each time progress of this resource load updates.
++         * Not all resources types and loader systems can support this event
++         * so sometimes it may not be available. If the resource
++         * is being loaded on a modern browser, using XHR, and the remote server
++         * properly sets Content-Length headers, then this will be available.
++         *
++         * The callback looks like {@link Resource.OnProgressSignal}.
++         *
++         * @member {Signal}
++         */
++        this.onProgress = new Signal();
++
++        /**
++         * Dispatched once this resource has loaded, if there was an error it will
++         * be in the `error` property.
++         *
++         * The callback looks like {@link Resource.OnCompleteSignal}.
++         *
++         * @member {Signal}
++         */
++        this.onComplete = new Signal();
++
++        /**
++         * Dispatched after this resource has had all the *after* middleware run on it.
++         *
++         * The callback looks like {@link Resource.OnCompleteSignal}.
++         *
++         * @member {Signal}
++         */
++        this.onAfterMiddleware = new Signal();
++    }
++
++    /**
++     * Stores whether or not this url is a data url.
++     *
++     * @member {boolean}
++     * @readonly
++     */
++    get isDataUrl()
++    {
++        return this._hasFlag(Resource.STATUS_FLAGS.DATA_URL);
++    }
++
++    /**
++     * Describes if this resource has finished loading. Is true when the resource has completely
++     * loaded.
++     *
++     * @member {boolean}
++     * @readonly
++     */
++    get isComplete()
++    {
++        return this._hasFlag(Resource.STATUS_FLAGS.COMPLETE);
++    }
++
++    /**
++     * Describes if this resource is currently loading. Is true when the resource starts loading,
++     * and is false again when complete.
++     *
++     * @member {boolean}
++     * @readonly
++     */
++    get isLoading()
++    {
++        return this._hasFlag(Resource.STATUS_FLAGS.LOADING);
++    }
++
++    /**
++     * Marks the resource as complete.
++     *
++     */
++    complete()
++    {
++        if (this.isComplete)
++        {
++            throw new Error('Complete called again for an already completed resource.');
++        }
++
++        this._setFlag(Resource.STATUS_FLAGS.COMPLETE, true);
++        this._setFlag(Resource.STATUS_FLAGS.LOADING, false);
++
++        this.onComplete.dispatch(this);
++    }
++
++    /**
++     * Aborts the loading of this resource, with an optional message.
++     *
++     * @param {string} message - The message to use for the error
++     */
++    abort(message)
++    {
++        // abort can be called multiple times, ignore subsequent calls.
++        if (this.error)
 +        {
 +            return;
 +        }
 +
-+        if (this.spriteFrameResources[this.jsonPath])
++        // store error
++        this.error = new Error(message);
++
++        // abort the actual loading
++        if (this.xhr)
 +        {
-+            func(null, this.spriteFrameResources[this.jsonPath]);
++            this.xhr.abort();
++        }
++        else if (this.xdr)
++        {
++            this.xdr.abort();
++        }
++        else if (this.data)
++        {
++            // single source
++            if (this.data.src)
++            {
++                this.data.src = Resource.EMPTY_GIF;
++            }
++            // multi-source
++            else
++            {
++                while (this.data.firstChild)
++                {
++                    this.data.removeChild(this.data.firstChild);
++                }
++            }
++        }
++
++        // done now.
++        this.complete();
++    }
++
++    /**
++     * Kicks off loading of this resource. This method is asynchronous.
++     *
++     * @param {function} [cb] - Optional callback to call once the resource is loaded.
++     */
++    load(cb)
++    {
++        if (this.isLoading)
++        {
++            return;
++        }
++
++        if (this.isComplete)
++        {
++            if (cb)
++            {
++                setTimeout(() => cb(this), 1);
++            }
++
++            return;
++        }
++        else if (cb)
++        {
++            this.onComplete.once(cb);
++        }
++
++        this._setFlag(Resource.STATUS_FLAGS.LOADING, true);
++
++        this.onStart.dispatch(this);
++
++        // if unset, determine the value
++
++        switch (this.loadType)
++        {
++            case Resource.LOAD_TYPE.IMAGE:
++                this.type = Resource.TYPE.IMAGE;
++                this._loadElement();
++                break;
++
++            case Resource.LOAD_TYPE.AUDIO:
++                this.type = Resource.TYPE.AUDIO;
++                this._loadSourceElement('audio');
++                break;
++
++            case Resource.LOAD_TYPE.VIDEO:
++                this.type = Resource.TYPE.VIDEO;
++                this._loadSourceElement('video');
++                break;
++
++            case Resource.LOAD_TYPE.XHR:
++            /* falls through */
++            default:
++                this._loadFile();
++                break;
++        }
++    }
++
++    /**
++     * Checks if the flag is set.
++     *
++     * @private
++     * @param {number} flag - The flag to check.
++     * @return {boolean} True if the flag is set.
++     */
++    _hasFlag(flag)
++    {
++        return !!(this._flags & flag);
++    }
++
++    /**
++     * (Un)Sets the flag.
++     *
++     * @private
++     * @param {number} flag - The flag to (un)set.
++     * @param {boolean} value - Whether to set or (un)set the flag.
++     */
++    _setFlag(flag, value)
++    {
++        this._flags = value ? (this._flags | flag) : (this._flags & ~flag);
++    }
++
++    /**
++     * Loads this resources using an element that has a single source,
++     * Currently, it is an image.
++     *
++     * @private
++     */
++    _loadElement()
++    {
++        if (this.metadata.loadElement)
++        {
++            this.data = this.metadata.loadElement;
++        }
++
++        this.data = {};
++
++        if (!this.metadata.skipSource)
++        {
++            this.data.src = this.url;
++        }
++
++        this.complete();
++    }
++
++    /**
++     * Loads this resources using an element that has multiple sources,
++     * like an HTMLAudioElement or HTMLVideoElement.
++     *
++     * @private
++     * @param {string} type - The type of element to use.
++     */
++    _loadSourceElement(type)
++    {
++        // TODO
++        this.abort(`Unsupported element: ${type}`);
++    }
++
++    /**
++     * Load the file from the URL and get the response text.
++     *
++     * @private
++     */
++    _loadFile()
++    {
++        // if unset, determine the value
++        if (typeof this.xhrType !== 'string')
++        {
++            this.xhrType = this._determineXhrType();
++        }
++
++        this.appSceneContext
++            .getFile(this.url)
++            .then((data) =>
++            {
++                this.responseText = data;
++                this._xhrOnLoad();
++            })
++            .catch((err) =>
++            {
++                this._onError(err);
++            });
++    }
++
++    /**
++     * Called if a load errors out.
++     *
++     * @param {Event} event - The error event from the element that emits it.
++     * @private
++     */
++    _onError(event)
++    {
++        this.abort(`Failed to load element using: ${event.target.nodeName}`);
++    }
++
++    /**
++     * Called when data successfully loads from an xhr/xdr request.
++     *
++     * @private
++     * @param {XMLHttpRequestLoadEvent|Event} event - Load event
++     */
++    _xhrOnLoad()
++    {
++        if (this.xhrType === Resource.XHR_RESPONSE_TYPE.TEXT)
++        {
++            this.data = this.responseText;
++            this.type = Resource.TYPE.TEXT;
++        }
++        // if json, parse into json object
++        else if (this.xhrType === Resource.XHR_RESPONSE_TYPE.JSON)
++        {
++            try
++            {
++                this.data = JSON.parse(this.responseText);
++                this.type = Resource.TYPE.JSON;
++            }
++            catch (e)
++            {
++                this.abort(`Error trying to parse loaded json: ${e}`);
++
++                return;
++            }
 +        }
 +        else
 +        {
-+            const url = this.url;
-+            const http = this.http;
-+            const fs = this.fs;
-+            const parsed = url.parse(this.jsonPath);
-+
-+            if (parsed.protocol)
-+            {
-+                http.get(this.jsonPath, (res) =>
-+                {
-+                    const statusCode = res.statusCode;
-+                    let err;
-+
-+                    if (statusCode !== 200)
-+                    {
-+                        err = new Error(`Request Failed.\nStatus Code: ${statusCode}`);
-+                    }
-+                    if (err)
-+                    {
-+                        func(err);
-+                        res.resume();
-+
-+                        return;
-+                    }
-+
-+                    const body = [];
-+
-+                    res.on('data', (data) =>
-+                    {
-+                        body.push(data);
-+                    });
-+
-+                    res.on('end', () =>
-+                    {
-+                        const data = body.join();
-+                        const jsonObj = JSON.parse(data);
-+
-+                        const filePathBase = this.jsonPath.substring(0, this.jsonPath.lastIndexOf('/') + 1);
-+                        const imgName = jsonObj.meta.image;
-+                        const sprite = Sprite.fromImage(`${filePathBase}${imgName}`);
-+
-+                        this.spriteFrameResources[this.jsonPath] = {
-+                            texture: sprite.texture,
-+                            meta: jsonObj,
-+                        };
-+                        func(null, this.spriteFrameResources[this.jsonPath]);
-+                    });
-+                });
-+            }
-+            else
-+            {
-+                fs.readFile(this.jsonPath, (err, data) =>
-+                {
-+                    if (err)
-+                    {
-+                        func(err);
-+
-+                        return;
-+                    }
-+                    const jsonObj = JSON.parse(data);
-+
-+                    const filePathBase = this.jsonPath.substring(0, this.jsonPath.lastIndexOf('/') + 1);
-+                    const imgName = jsonObj.meta.image;
-+                    const sprite = Sprite.fromImage(`${filePathBase}${imgName}`);
-+
-+                    this.spriteFrameResources[this.jsonPath] = {
-+                        texture: sprite.texture,
-+                        meta: jsonObj,
-+                    };
-+                    func(null, this.spriteFrameResources[this.jsonPath]);
-+                });
-+            }
++            // other types just return the response
++            this.data = this.responseText;
 +        }
++
++        this.complete();
++    }
++
++    /**
++     * Determines the responseType of an XHR request based on the extension of the
++     * resource being loaded.
++     *
++     * @private
++     * @return {Resource.XHR_RESPONSE_TYPE} The responseType to use.
++     */
++    _determineXhrType()
++    {
++        return Resource._xhrTypeMap[this.extension] || Resource.XHR_RESPONSE_TYPE.TEXT;
++    }
++
++    /**
++     * Determines the loadType of a resource based on the extension of the
++     * resource being loaded.
++     *
++     * @private
++     * @return {Resource.LOAD_TYPE} The loadType to use.
++     */
++    _determineLoadType()
++    {
++        return Resource._loadTypeMap[this.extension] || Resource.LOAD_TYPE.XHR;
++    }
++
++    /**
++     * Extracts the extension (sans '.') of the file being loaded by the resource.
++     *
++     * @private
++     * @return {string} The extension.
++     */
++    _getExtension()
++    {
++        let url = this.url;
++        let ext = '';
++
++        if (this.isDataUrl)
++        {
++            const slashIndex = url.indexOf('/');
++
++            ext = url.substring(slashIndex + 1, url.indexOf(';', slashIndex));
++        }
++        else
++        {
++            const queryStart = url.indexOf('?');
++
++            if (queryStart !== -1)
++            {
++                url = url.substring(0, queryStart);
++            }
++
++            ext = url.substring(url.lastIndexOf('.') + 1);
++        }
++
++        return ext.toLowerCase();
 +    }
 +}
++
++/**
++ * The types of resources a resource could represent.
++ *
++ * @static
++ * @readonly
++ * @enum {number}
++ */
++Resource.STATUS_FLAGS = {
++    NONE:       0,
++    DATA_URL:   (1 << 0),
++    COMPLETE:   (1 << 1),
++    LOADING:    (1 << 2),
++};
++
++/**
++ * The types of resources a resource could represent.
++ *
++ * @static
++ * @readonly
++ * @enum {number}
++ */
++Resource.TYPE = {
++    UNKNOWN:    0,
++    JSON:       1,
++    XML:        2,
++    IMAGE:      3,
++    AUDIO:      4,
++    VIDEO:      5,
++    TEXT:       6,
++};
++
++/**
++ * The types of loading a resource can use.
++ *
++ * @static
++ * @readonly
++ * @enum {number}
++ */
++Resource.LOAD_TYPE = {
++    /** Uses XMLHttpRequest to load the resource. */
++    XHR:    1,
++    /** Uses an `Image` object to load the resource. */
++    IMAGE:  2,
++    /** Uses an `Audio` object to load the resource. */
++    AUDIO:  3,
++    /** Uses a `Video` object to load the resource. */
++    VIDEO:  4,
++};
++
++/**
++ * The XHR ready states, used internally.
++ *
++ * @static
++ * @readonly
++ * @enum {string}
++ */
++Resource.XHR_RESPONSE_TYPE = {
++    /** string */
++    DEFAULT:    'text',
++    /** ArrayBuffer */
++    BUFFER:     'arraybuffer',
++    /** Blob */
++    BLOB:       'blob',
++    /** Document */
++    DOCUMENT:   'document',
++    /** Object */
++    JSON:       'json',
++    /** String */
++    TEXT:       'text',
++};
++
++Resource._loadTypeMap = {
++    // images
++    gif:        Resource.LOAD_TYPE.IMAGE,
++    png:        Resource.LOAD_TYPE.IMAGE,
++    bmp:        Resource.LOAD_TYPE.IMAGE,
++    jpg:        Resource.LOAD_TYPE.IMAGE,
++    jpeg:       Resource.LOAD_TYPE.IMAGE,
++    tif:        Resource.LOAD_TYPE.IMAGE,
++    tiff:       Resource.LOAD_TYPE.IMAGE,
++    webp:       Resource.LOAD_TYPE.IMAGE,
++    tga:        Resource.LOAD_TYPE.IMAGE,
++    svg:        Resource.LOAD_TYPE.IMAGE,
++    'svg+xml':  Resource.LOAD_TYPE.IMAGE, // for SVG data urls
++
++    // audio
++    mp3:        Resource.LOAD_TYPE.AUDIO,
++    ogg:        Resource.LOAD_TYPE.AUDIO,
++    wav:        Resource.LOAD_TYPE.AUDIO,
++
++    // videos
++    mp4:        Resource.LOAD_TYPE.VIDEO,
++    webm:       Resource.LOAD_TYPE.VIDEO,
++};
++
++Resource._xhrTypeMap = {
++    // xml
++    xhtml:      Resource.XHR_RESPONSE_TYPE.DOCUMENT,
++    html:       Resource.XHR_RESPONSE_TYPE.DOCUMENT,
++    htm:        Resource.XHR_RESPONSE_TYPE.DOCUMENT,
++    xml:        Resource.XHR_RESPONSE_TYPE.DOCUMENT,
++    tmx:        Resource.XHR_RESPONSE_TYPE.DOCUMENT,
++    svg:        Resource.XHR_RESPONSE_TYPE.DOCUMENT,
++
++    // This was added to handle Tiled Tileset XML, but .tsx is also a TypeScript React Component.
++    // Since it is way less likely for people to be loading TypeScript files instead of Tiled files,
++    // this should probably be fine.
++    tsx:        Resource.XHR_RESPONSE_TYPE.DOCUMENT,
++
++    // images
++    gif:        Resource.XHR_RESPONSE_TYPE.BLOB,
++    png:        Resource.XHR_RESPONSE_TYPE.BLOB,
++    bmp:        Resource.XHR_RESPONSE_TYPE.BLOB,
++    jpg:        Resource.XHR_RESPONSE_TYPE.BLOB,
++    jpeg:       Resource.XHR_RESPONSE_TYPE.BLOB,
++    tif:        Resource.XHR_RESPONSE_TYPE.BLOB,
++    tiff:       Resource.XHR_RESPONSE_TYPE.BLOB,
++    webp:       Resource.XHR_RESPONSE_TYPE.BLOB,
++    tga:        Resource.XHR_RESPONSE_TYPE.BLOB,
++
++    // json
++    json:       Resource.XHR_RESPONSE_TYPE.JSON,
++
++    // text
++    text:       Resource.XHR_RESPONSE_TYPE.TEXT,
++    txt:        Resource.XHR_RESPONSE_TYPE.TEXT,
++
++    // fonts
++    ttf:        Resource.XHR_RESPONSE_TYPE.BUFFER,
++    otf:        Resource.XHR_RESPONSE_TYPE.BUFFER,
++};
++
++// We can't set the `src` attribute to empty string, so on abort we set it to this 1px transparent gif
++Resource.EMPTY_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==';
++
++/**
++ * Quick helper to set a value on one of the extension maps. Ensures there is no
++ * dot at the start of the extension.
++ *
++ * @ignore
++ * @param {object} map - The map to set on.
++ * @param {string} extname - The extension (or key) to set.
++ * @param {number} val - The value to set.
++ */
++function setExtMap(map, extname, val)
++{
++    if (extname && extname.indexOf('.') === 0)
++    {
++        extname = extname.substring(1);
++    }
++
++    if (!extname)
++    {
++        return;
++    }
++
++    map[extname] = val;
++}
+diff --git a/src/loaders/spritesheetParser.js b/src/loaders/utils/spritesheetParser.js
+similarity index 84%
+rename from src/loaders/spritesheetParser.js
+rename to src/loaders/utils/spritesheetParser.js
+index e57dfb28..51cecdff 100644
+--- a/src/loaders/spritesheetParser.js
++++ b/src/loaders/utils/spritesheetParser.js
+@@ -1,6 +1,17 @@
+-import { Resource } from 'resource-loader';
++import { isV8 } from '../../core/utils';
+ import path from 'path';
+-import { Spritesheet } from '../core';
++import { Spritesheet } from '../../core';
++
++let Resource;
++
++if (isV8())
++{
++    Resource = require('../pxscene/resource').default; // eslint-disable-line global-require
++}
++else
++{
++    Resource = require('resource-loader'); // eslint-disable-line global-require
++}
+ 
+ export default function ()
+ {
+diff --git a/src/loaders/textureParser.js b/src/loaders/utils/textureParser.js
+similarity index 57%
+rename from src/loaders/textureParser.js
+rename to src/loaders/utils/textureParser.js
+index 480edc1c..b84b5a1f 100644
+--- a/src/loaders/textureParser.js
++++ b/src/loaders/utils/textureParser.js
+@@ -1,5 +1,17 @@
+-import { Resource } from 'resource-loader';
+-import Texture from '../core/textures/Texture';
++import { isV8 } from '../../core/utils';
++
++let Resource;
++
++if (isV8())
++{
++    Resource = require('../pxscene/resource').default; // eslint-disable-line global-require
++}
++else
++{
++    Resource = require('resource-loader'); // eslint-disable-line global-require
++}
++
++import Texture from '../../core/textures/Texture';
+ 
+ export default function ()
+ {
 diff --git a/src/polyfill/index.js b/src/polyfill/index.js
 index d963deec..f54d5709 100644
 --- a/src/polyfill/index.js

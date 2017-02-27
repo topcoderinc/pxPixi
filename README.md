@@ -50,18 +50,18 @@ git push heroku master
 (1) If you modified and built pixi.js, please copy pixi.js/dist/* to /pixi-server/dist/pixi and update it on Heroku.
 (2) When you have deployed <submission>/pixi-server to Heroku, you should replace `ASSET_URL` in /example-server/dist/.js (all the example files) to the host URL of pixi-server. And also note that use the protocol to `http://` instead of `https://`.
 
-
 ## Heroku examples
 
-- Basic: http://pxscene-pixi-examples.herokuapp.com//basic.js
-- Container: http://pxscene-pixi-examples.herokuapp.com/container.js
-- Container Pivot: http://pxscene-pixi-examples.herokuapp.com/container-pivot.js
-- Spritesheet Animation: http://pxscene-pixi-examples.herokuapp.com/spritesheet.js
-- Click: http://pxscene-pixi-examples.herokuapp.com/click.js
-- Tiling Sprite: http://pxscene-pixi-examples.herokuapp.com/tiling-sprite.js
-- Text: http://pxscene-pixi-examples.herokuapp.com/text.js
-
-Local example files are located in /example-server/dist/
+- Basic: http://pxscene-pixi-examples.herokuapp.com/basics/basic.js
+- Container: http://pxscene-pixi-examples.herokuapp.com/basics/container.js
+- Container Pivot: http://pxscene-pixi-examples.herokuapp.com/basics/container-pivot.js
+- Spritesheet Animation: http://pxscene-pixi-examples.herokuapp.com/basics/spritesheet.js
+- Click: http://pxscene-pixi-examples.herokuapp.com/basics/click.js
+- Tiling Sprite: http://pxscene-pixi-examples.herokuapp.com/basics/tiling-sprite.js
+- Text: http://pxscene-pixi-examples.herokuapp.com/basics/text.js
+- Textured Mesh: http://pxscene-pixi-examples.herokuapp.com/basics/textured-mesh.js
+- Graphics: http://pxscene-pixi-examples.herokuapp.com/basics/graphics.js
+- Render Texture: http://pxscene-pixi-examples.herokuapp.com/basics/render-texture.js
 
 Open pxscene and enter the URL of each example to the input box and press return, you will see the results.
 

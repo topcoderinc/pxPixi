@@ -1,0 +1,111 @@
+From 1921093021fc857024bf30882871818b19f57ea3 Mon Sep 17 00:00:00 2001
+From: cqy <chqy24@gmail.com>
+Date: Tue, 14 Mar 2017 09:53:47 +0800
+Subject: [PATCH] pxscene support
+
+---
+ bin/pixi-display.js | 54 ++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 53 insertions(+), 1 deletion(-)
+ mode change 100644 => 100755 bin/pixi-display.js
+
+diff --git a/bin/pixi-display.js b/bin/pixi-display.js
+old mode 100644
+new mode 100755
+index 86bf30e..1f917f9
+--- a/bin/pixi-display.js
++++ b/bin/pixi-display.js
+@@ -6,6 +6,7 @@ PIXI.DISPLAY_FLAG = {
+ };
+ var WebGLRenderer = PIXI.WebGLRenderer;
+ var CanvasRenderer = PIXI.CanvasRenderer;
++var PXSceneRenderer = PIXI.PXSceneRenderer;
+ Object.assign(PIXI.Container.prototype, {
+     displayList: null,
+     displayChildren: null,
+@@ -49,6 +50,22 @@ Object.assign(PIXI.Container.prototype, {
+         }
+         this.containerRenderWebGL(renderer);
+     },
++    renderPXScene:function(renderer){
++        if (!this.visible) {
++            this.displayOrder = 0;
++            return;
++        }
++        this.displayOrder = renderer.incDisplayOrder();
++        if (this.worldAlpha <= 0 || !this.renderable) {
++            return;
++        }
++        if (this.displayList) {
++            this.displayList.renderPXScene(this, renderer);
++            return;
++        }
++        this.containerRenderPXScene(renderer);
++    },
++    containerRenderPXScene: PIXI.Container.prototype.renderPXScene,
+     containerRenderWebGL: PIXI.Container.prototype.renderWebGL,
+     containerRenderCanvas: PIXI.Container.prototype.renderCanvas
+ });
+@@ -170,6 +187,20 @@ var pixi_display;
+             }
+         };
+         ;
++        DisplayGroup.prototype.renderPXScene = function (parentContainer, renderer) {
++            var list = this.computedChildren;
++            for (var j = 0; j < list.length; j++) {
++                var container = list[j];
++                if (container.displayFlag) {
++                    container.renderPXScene(renderer);
++                }
++                else {
++                    container.displayOrder = renderer.incDisplayOrder();
++                    container._renderPXScene(renderer);
++                }
++            }
++        };
++        ;
+         return DisplayGroup;
+     }(utils.EventEmitter));
+     pixi_display.DisplayGroup = DisplayGroup;
+@@ -288,6 +319,14 @@ var pixi_display;
+             }
+         };
+         ;
++        DisplayList.prototype.renderPXScene = function (parentContainer, renderer){
++            var groups = this.displayGroups;
++            for (var i = 0; i < groups.length; i++) {
++                var group = groups[i];
++                group.renderPXScene(parentContainer, renderer);
++            }
++        };
++        ;
+         return DisplayList;
+     }(utils.EventEmitter));
+     pixi_display.DisplayList = DisplayList;
+@@ -451,9 +490,22 @@ Object.assign(CanvasRenderer.prototype, {
+         this._oldRender(displayObject, renderTexture, clear, transform, skipUpdateTransform);
+     }
+ });
++Object.assign(PXSceneRenderer.prototype, {
++    _lastDisplayOrder: 0,
++    incDisplayOrder: function () {
++        return ++this._lastDisplayOrder;
++    },
++    _oldRender: PXSceneRenderer.prototype.render,
++    render: function (displayObject, renderTexture, clear, transform, skipUpdateTransform) {
++        if (!renderTexture) {
++            this._lastDisplayOrder = 0;
++        }
++        this._oldRender(displayObject, renderTexture, clear, transform, skipUpdateTransform);
++    }
++});
+ Object.assign(PIXI, {
+     display: pixi_display,
+     DisplayGroup: pixi_display.DisplayGroup,
+     DisplayList: pixi_display.DisplayList
+ });
+-//# sourceMappingURL=pixi-display.js.map
+\ No newline at end of file
++//# sourceMappingURL=pixi-display.js.map
+-- 
+2.10.1 (Apple Git-78)
+

@@ -62,8 +62,24 @@ git push heroku master
 - Textured Mesh: http://pxscene-pixi-examples.herokuapp.com/basics/textured-mesh.js
 - Graphics: http://pxscene-pixi-examples.herokuapp.com/basics/graphics.js
 - Render Texture: http://pxscene-pixi-examples.herokuapp.com/basics/render-texture.js
+- Display Z Order: http://shrouded-castle-71808.herokuapp.com/display/z-order.js
+- Layers Z Order: http://shrouded-castle-71808.herokuapp.com/layers/z-order.js
+- Layers Lighting: http://shrouded-castle-71808.herokuapp.com/layers/lighting.js
+- Spine Dragon: http://shrouded-castle-71808.herokuapp.com/spine/dragon.js
+- Spine Goblin: http://shrouded-castle-71808.herokuapp.com/spine/goblins.js
+- Spine Dragon: http://shrouded-castle-71808.herokuapp.com/spine/pixie.js
+- Spine Spineboy: http://shrouded-castle-71808.herokuapp.com/spine/spineboy.js
 
 Open pxscene and enter the URL of each example to the input box and press return, you will see the results.
+
+## Plugins
+Some examples need extra plugins' support, and there're extra patchs for these plugins to work with pxscene.
+
+Examples|plugin|plugin source|patch file|patch base
+--------|------|-------------|----------|----------
+Display Z Order |pixi-display |https://github.com/pixijs/pixi-display/tree/master |pixi-display.patch | branch master and commit b0898bf208431badfd2448cf2dc965a24de39ef8
+Layers Z Order and Layers Lighting |pixi-layers |https://github.com/pixijs/pixi-display/tree/layers |pixi-layers.patch | branch layers and commit 0f812e3e6a16c6883c278aae6f1d719f12052862
+All Spine examples |pixi-spine |https://github.com/pixijs/pixi-spine |pixi-spine.patch |branch master and commit bc64e3e6f3784f5eda1094ddc283561eb63ab3d3
 
 ## Limitations
 
@@ -83,6 +99,7 @@ const fontFamilyUrlMap = {
 ```
 Currently, it only supports Arial and DejaVuSans.
 
+(4) Layers Lighting example lack of lighting effect, because PXScene does not support filter yet.
 
 ## Remarks
 (1) If you use the example in Heroku, you may need to wait several seconds for the resource downloading.

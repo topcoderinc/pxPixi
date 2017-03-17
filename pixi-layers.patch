@@ -1,0 +1,100 @@
+From 266ef999e2a6611fad50618ead6c33e5f8db38ba Mon Sep 17 00:00:00 2001
+From: cqy <chqy24@gmail.com>
+Date: Tue, 14 Mar 2017 09:55:59 +0800
+Subject: [PATCH] pxscene support
+
+---
+ bin/pixi-layers.js | 45 +++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 43 insertions(+), 2 deletions(-)
+ mode change 100644 => 100755 bin/pixi-layers.js
+
+diff --git a/bin/pixi-layers.js b/bin/pixi-layers.js
+old mode 100644
+new mode 100755
+index 9c298fa..ecc2822
+--- a/bin/pixi-layers.js
++++ b/bin/pixi-layers.js
+@@ -30,8 +30,23 @@ var pixi_display;
+             }
+             this.containerRenderCanvas(renderer);
+         },
++        renderPXScene: function (renderer) {
++            if (this._activeParentLayer && this._activeParentLayer != renderer._activeLayer) {
++                return;
++            }
++            if (!this.visible) {
++                this.displayOrder = 0;
++                return;
++            }
++            this.displayOrder = renderer.incDisplayOrder();
++            if (this.worldAlpha <= 0 || !this.renderable) {
++                return;
++            }
++            this.containerRenderPXScene(renderer);
++        },
+         containerRenderWebGL: PIXI.Container.prototype.renderWebGL,
+-        containerRenderCanvas: PIXI.Container.prototype.renderCanvas
++        containerRenderCanvas: PIXI.Container.prototype.renderCanvas,
++        containerRenderPXScene: PIXI.Container.prototype.renderPXScene
+     });
+ })(pixi_display || (pixi_display = {}));
+ Object.assign(PIXI.DisplayObject.prototype, {
+@@ -340,7 +355,8 @@ var pixi_display;
+             sorted.length = 0;
+             if (this.insertChildrenBeforeActive) {
+                 for (var i = 0; i < children.length; i++) {
+-                    sorted.push(children[i]);
++                    if(!children[i].noRender)
++                        sorted.push(children[i]);
+                 }
+             }
+             for (var i = 0; i < active.length; i++) {
+@@ -400,6 +416,12 @@ var pixi_display;
+                 this._postRender(renderer);
+             }
+         };
++        Layer.prototype.renderPXScene = function (renderer) {
++            if (this._preRender(renderer)) {
++                this.containerRenderPXScene(renderer);
++                this._postRender(renderer);
++            }
++        };
+         return Layer;
+     }(Container));
+     pixi_display.Layer = Layer;
+@@ -408,6 +430,7 @@ var pixi_display;
+ (function (pixi_display) {
+     var WebGLRenderer = PIXI.WebGLRenderer;
+     var CanvasRenderer = PIXI.CanvasRenderer;
++    var PXSceneRenderer = PIXI.PXSceneRenderer;
+     Object.assign(WebGLRenderer.prototype, {
+         _lastDisplayOrder: 0,
+         _activeLayer: null,
+@@ -444,6 +467,24 @@ var pixi_display;
+             this._oldRender(displayObject, renderTexture, clear, transform, skipUpdateTransform);
+         }
+     });
++    Object.assign(PXSceneRenderer.prototype, {
++        _lastDisplayOrder: 0,
++        _activeLayer: null,
++        incDisplayOrder: function () {
++            return ++this._lastDisplayOrder;
++        },
++        _oldRender: PXSceneRenderer.prototype.render,
++        render: function (displayObject, renderTexture, clear, transform, skipUpdateTransform) {
++            if (!renderTexture) {
++                this._lastDisplayOrder = 0;
++            }
++            this._activeLayer = null;
++            if (displayObject.isStage) {
++                displayObject.updateStage();
++            }
++            this._oldRender(displayObject, renderTexture, clear, transform, skipUpdateTransform);
++        }
++    });
+ })(pixi_display || (pixi_display = {}));
+ var pixi_display;
+ (function (pixi_display) {
+-- 
+2.10.1 (Apple Git-78)
+

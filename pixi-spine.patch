@@ -1,0 +1,105 @@
+From adc9597f52b01bcec092d382bdd8cdd4aef7cc4a Mon Sep 17 00:00:00 2001
+From: cqy <chqy24@gmail.com>
+Date: Tue, 14 Mar 2017 09:58:05 +0800
+Subject: [PATCH] pxscene support
+
+---
+ bin/pixi-spine.js | 35 +++++++++++++++++++++++++++++++----
+ 1 file changed, 31 insertions(+), 4 deletions(-)
+ mode change 100644 => 100755 bin/pixi-spine.js
+
+diff --git a/bin/pixi-spine.js b/bin/pixi-spine.js
+old mode 100644
+new mode 100755
+index 14d7bbf..38c20ad
+--- a/bin/pixi-spine.js
++++ b/bin/pixi-spine.js
+@@ -4400,7 +4400,7 @@ var pixi_spine;
+                         for (var key in dictionary) {
+                             var skinAttachment = dictionary[key];
+                             if (slotAttachment == skinAttachment) {
+-                                var attachment = this.getAttachment(slotIndex, name);
++                                var attachment = this.getAttachment(slotIndex);
+                                 if (attachment != null)
+                                     slot.setAttachment(attachment);
+                                 break;
+@@ -5364,7 +5364,7 @@ var pixi_spine;
+             baseUrl = baseUrl.replace(this.baseUrl, '');
+             var adapter = imageLoaderAdapter(this, resource.name + '_atlas_page_', baseUrl, imageOptions);
+             this.add(resource.name + '_atlas', atlasPath, atlasOptions, function (atlasResource) {
+-                new pixi_spine.core.TextureAtlas(atlasResource.xhr.responseText, adapter, function (spineAtlas) {
++                new pixi_spine.core.TextureAtlas(atlasResource.responseText || atlasResource.xhr.responseText, adapter, function (spineAtlas) {
+                     var spineJsonParser = new pixi_spine.core.SkeletonJson(new pixi_spine.core.AtlasAttachmentLoader(spineAtlas));
+                     if (metadataSkeletonScale) {
+                         spineJsonParser.scale = metadataSkeletonScale;
+@@ -5409,7 +5409,9 @@ var pixi_spine;
+     var SpineSprite = (function (_super) {
+         __extends(SpineSprite, _super);
+         function SpineSprite(tex) {
+-            return _super.call(this, tex) || this;
++            var _this = _super.call(this, tex) || this;
++            _this.spine = true;
++            return _this;
+         }
+         return SpineSprite;
+     }(PIXI.Sprite));
+@@ -5451,6 +5453,7 @@ var pixi_spine;
+                 var slot = _this.skeleton.slots[i];
+                 var attachment = slot.attachment;
+                 var slotContainer = new PIXI.Container();
++                slotContainer.useMatrix = true;
+                 _this.slotContainers.push(slotContainer);
+                 _this.addChild(slotContainer);
+                 if (attachment instanceof pixi_spine.core.RegionAttachment) {
+@@ -5506,8 +5509,10 @@ var pixi_spine;
+             var r0 = this.tintRgb[0];
+             var g0 = this.tintRgb[1];
+             var b0 = this.tintRgb[2];
++            
+             for (i = 0, n = slots.length; i < n; i++) {
+                 var slot = slots[i];
++
+                 var attachment = slot.attachment;
+                 var slotContainer = this.slotContainers[i];
+                 if (!attachment) {
+@@ -5554,7 +5559,7 @@ var pixi_spine;
+                         }
+                         else {
+                             if (transAny.position) {
+-                                transform = new PIXI.TransformBase();
++                                transform = new PIXI.TransformStatic();
+                                 slotContainer.transform = transform;
+                             }
+                             lt_1 = transform.localTransform;
+@@ -5735,5 +5740,27 @@ var pixi_spine;
+         this._currentBounds = null;
+     }
+ })(pixi_spine || (pixi_spine = {}));
++(function(){
++    Object.assign(PIXI.Container.prototype, {
++        renderPXScene: function (renderer) {
++            this.updateTransform();
++            this.containerRenderPXScene(renderer);
++            if(this.renderedObject && this.useMatrix){
++                this.renderedObject.useMatrix = true;
++                this.renderedObject.m11 = this.transform.localTransform.a;
++                this.renderedObject.m12 = this.transform.localTransform.b;
++                this.renderedObject.m21 = this.transform.localTransform.c;
++                this.renderedObject.m22 = this.transform.localTransform.d;
++                this.renderedObject.m41 = this.transform.localTransform.tx;
++                this.renderedObject.m42 = this.transform.localTransform.ty;
++            }
++            if(this.renderedObject && !this.visible){
++                this.renderedObject.dispose();
++                this.renderedObject = null;
++            }
++        },
++        containerRenderPXScene: PIXI.Container.prototype.renderPXScene
++    });
++})();
+ PIXI.spine = pixi_spine;
+ //# sourceMappingURL=pixi-spine.js.map
+\ No newline at end of file
+-- 
+2.10.1 (Apple Git-78)
+

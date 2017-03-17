@@ -1,6 +1,6 @@
 /*!
  * pixi.js - v4.3.4
- * Compiled Sat, 25 Feb 2017 12:25:20 UTC
+ * Compiled Tue, 14 Mar 2017 03:28:10 UTC
  *
  * pixi.js is licensed under the MIT License.
  * http://www.opensource.org/licenses/mit-license
@@ -25903,6 +25903,8 @@ var _DisplayObject2 = require('./DisplayObject');
 
 var _DisplayObject3 = _interopRequireDefault(_DisplayObject2);
 
+var _const = require('../const');
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -26472,6 +26474,10 @@ var Container = function (_DisplayObject) {
             }
         }
 
+        if (this.blendMode === _const.BLEND_MODES.ADD) {
+            this.renderedObject.a = 0.5;
+        }
+
         function innerRenderMask(maskRenderedObject) {
             if (!this.renderedObjectMaskContainer) {
                 this.renderedObjectMaskContainer = renderer.view.create({
@@ -26659,7 +26665,7 @@ var Container = function (_DisplayObject) {
 exports.default = Container;
 Container.prototype.containerUpdateTransform = Container.prototype.updateTransform;
 
-},{"../utils":131,"./DisplayObject":50}],50:[function(require,module,exports){
+},{"../const":47,"../utils":131,"./DisplayObject":50}],50:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -26733,6 +26739,7 @@ var DisplayObject = function (_EventEmitter) {
          *
          * @member {PIXI.TransformBase}
          */
+
         _this.transform = new TransformClass();
 
         /**
@@ -30698,7 +30705,8 @@ var PXSceneGraphicsRenderer = function () {
         var circle = this.renderer.view.create({
             t: 'rect',
             parent: parentRenderedObject,
-            clip: true
+            clip: true,
+            fillColor: 0x0
         });
 
         circle.w = spriteWidth * ratio;
@@ -39813,6 +39821,18 @@ var Sprite = function (_Container) {
         this.shader = null;
     };
 
+    /**
+     * force the sprite recreate when render next time.
+     */
+
+
+    Sprite.prototype.forceCreate = function forceCreate() {
+        if (this.renderedObject) {
+            this.renderedObject.dispose();
+            this.renderedObject = null;
+        }
+    };
+
     // some helper functions..
 
     /**
@@ -40813,17 +40833,19 @@ var PXSceneSpriteRenderer = function () {
             renderedObjectSprite.cy = attr.cy;
 
             if (texture.rotate) {
-                var rotateParam = this._getRotationParamByRotate(texture.rotate);
+                var rotateParam = this._getRotationParamByRotate(texture.rotate, sprite.spine);
 
                 if (rotateParam) {
-                    renderedObject.cx = spriteWidth * 0.5;
-                    renderedObject.cy = spriteHeight * 0.5;
-                    renderedObject.x = attr.x - attr.sx * renderedObject.cx;
-                    renderedObject.y = attr.y - attr.sy * renderedObject.cy;
-
-                    renderedObject.sx = attr.sx * rotateParam.sx;
-                    renderedObject.sy = attr.sy * rotateParam.sy;
                     renderedObject.r = attr.r + rotateParam.r;
+                    if (!sprite.spine) {
+                        renderedObject.cx = spriteWidth * 0.5;
+                        renderedObject.cy = spriteHeight * 0.5;
+                        renderedObject.x = attr.x - attr.sx * renderedObject.cx;
+                        renderedObject.y = attr.y - attr.sy * renderedObject.cy;
+
+                        renderedObject.sx = attr.sx * rotateParam.sx;
+                        renderedObject.sy = attr.sy * rotateParam.sy;
+                    }
                 }
             }
 
@@ -40851,12 +40873,13 @@ var PXSceneSpriteRenderer = function () {
      * Calculate rotation param by rotate (from texture packer)
      *
      * @param {Number} rotation - Rotation (from texture packer)
+     * @param {Boolean} isSpine - Sprite is SpineSprite or not
      * @returns {Object|null} Rotation param
      * @private
      */
 
 
-    PXSceneSpriteRenderer.prototype._getRotationParamByRotate = function _getRotationParamByRotate(rotation) {
+    PXSceneSpriteRenderer.prototype._getRotationParamByRotate = function _getRotationParamByRotate(rotation, isSpine) {
         if (rotation % 2 !== 0) {
             // Not supported yet, don't rotate
             return null;
@@ -40869,10 +40892,12 @@ var PXSceneSpriteRenderer = function () {
             flip = true;
         }
 
-        if (rotation === 2) {
-            rotation = 6;
-        } else if (rotation === 6) {
-            rotation = 2;
+        if (!isSpine) {
+            if (rotation === 2) {
+                rotation = 6;
+            } else if (rotation === 6) {
+                rotation = 2;
+            }
         }
 
         var degree = rotation * 45;
@@ -49788,9 +49813,11 @@ var PXSceneTilingSpriteRenderer = function () {
                 var height = _this.renderer.context.h;
                 var attr = _this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
 
+                var parent = sprite.parent.renderedObject || _this.renderer.context;
+
                 sprite.renderedObject = _this.renderer.view.create({
                     t: 'image',
-                    parent: _this.renderer.context,
+                    parent: parent,
                     x: attr.x,
                     y: attr.y,
                     cx: attr.cx,

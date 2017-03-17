@@ -1,5 +1,62 @@
+From 53f8810b623cdd108fb02c399f1fe3cedc16acea Mon Sep 17 00:00:00 2001
+From: cqy <chqy24@gmail.com>
+Date: Tue, 14 Mar 2017 10:24:47 +0800
+Subject: [PATCH] pxscene support
+
+---
+ src/core/autoDetectRenderer.js                     |    8 +-
+ src/core/const.js                                  |    2 +
+ src/core/display/Container.js                      |  185 +++-
+ src/core/display/DisplayObject.js                  |   31 +-
+ src/core/graphics/GraphicsV8.js                    | 1040 ++++++++++++++++++++
+ .../graphics/pxscene/PXSceneGraphicsRenderer.js    |  400 ++++++++
+ src/core/index.js                                  |    7 +-
+ src/core/renderers/pxscene/PXSceneRenderer.js      |  265 +++++
+ .../renderers/pxscene/utils/PXSceneRenderTarget.js |   82 ++
+ src/core/sprites/Sprite.js                         |  219 ++++-
+ src/core/sprites/pxscene/PXSceneSpriteRenderer.js  |  465 +++++++++
+ src/core/text/Text.js                              |  915 +----------------
+ src/core/text/TextV8.js                            |  386 ++++++++
+ src/core/text/TextWeb.js                           |  915 +++++++++++++++++
+ src/core/text/pxscene/PXSceneTextRenderer.js       |  191 ++++
+ src/core/textures/BaseRenderTexture.js             |    8 +
+ src/core/textures/BaseTexture.js                   |    8 +-
+ src/core/textures/Texture.js                       |    4 +-
+ src/core/ticker/Ticker.js                          |   86 +-
+ src/core/utils/canUploadSameBuffer.js              |    2 +-
+ src/core/utils/index.js                            |  114 ++-
+ src/extras/cacheAsBitmap.js                        |   73 +-
+ src/extras/index.js                                |    1 +
+ src/extras/pxscene/PXSceneTilingSpriteRenderer.js  |  157 +++
+ src/interaction/InteractionManager.js              |  260 +++--
+ src/loaders/{ => browser}/bitmapFontParser.js      |    4 +-
+ src/loaders/{ => browser}/loader.js                |    4 +-
+ src/loaders/index.js                               |   46 +-
+ src/loaders/pxscene/loader.js                      |  661 +++++++++++++
+ src/loaders/pxscene/resource.js                    |  748 ++++++++++++++
+ src/loaders/{ => utils}/spritesheetParser.js       |   15 +-
+ src/loaders/{ => utils}/textureParser.js           |   16 +-
+ src/particles/ParticleContainer.js                 |  109 ++
+ src/polyfill/index.js                              |   34 +-
+ 34 files changed, 6392 insertions(+), 1069 deletions(-)
+ create mode 100644 src/core/graphics/GraphicsV8.js
+ create mode 100644 src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
+ create mode 100644 src/core/renderers/pxscene/PXSceneRenderer.js
+ create mode 100644 src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
+ create mode 100644 src/core/sprites/pxscene/PXSceneSpriteRenderer.js
+ create mode 100644 src/core/text/TextV8.js
+ create mode 100644 src/core/text/TextWeb.js
+ create mode 100644 src/core/text/pxscene/PXSceneTextRenderer.js
+ create mode 100644 src/extras/pxscene/PXSceneTilingSpriteRenderer.js
+ rename src/loaders/{ => browser}/bitmapFontParser.js (97%)
+ rename src/loaders/{ => browser}/loader.js (95%)
+ create mode 100644 src/loaders/pxscene/loader.js
+ create mode 100644 src/loaders/pxscene/resource.js
+ rename src/loaders/{ => utils}/spritesheetParser.js (84%)
+ rename src/loaders/{ => utils}/textureParser.js (57%)
+
 diff --git a/src/core/autoDetectRenderer.js b/src/core/autoDetectRenderer.js
-index 89604256..d8b03a57 100644
+index 8960425..d8b03a5 100644
 --- a/src/core/autoDetectRenderer.js
 +++ b/src/core/autoDetectRenderer.js
 @@ -1,6 +1,7 @@
@@ -28,7 +85,7 @@ index 89604256..d8b03a57 100644
      {
          return new WebGLRenderer(width, height, options);
 diff --git a/src/core/const.js b/src/core/const.js
-index f9235e4c..4d29a35d 100644
+index f9235e4..4d29a35 100644
 --- a/src/core/const.js
 +++ b/src/core/const.js
 @@ -50,11 +50,13 @@ export const DEG_TO_RAD = Math.PI / 180;
@@ -46,10 +103,17 @@ index f9235e4c..4d29a35d 100644
  
  /**
 diff --git a/src/core/display/Container.js b/src/core/display/Container.js
-index ed8cd5f3..b25ac64e 100644
+index ed8cd5f..f56f9ff 100644
 --- a/src/core/display/Container.js
 +++ b/src/core/display/Container.js
-@@ -317,10 +317,10 @@ export default class Container extends DisplayObject
+@@ -1,5 +1,6 @@
+ import { removeItems } from '../utils';
+ import DisplayObject from './DisplayObject';
++import { BLEND_MODES } from '../const';
+ 
+ /**
+  * A Container represents a collection of display objects.
+@@ -317,10 +318,10 @@ export default class Container extends DisplayObject
      {
          this._boundsID++;
  
@@ -64,7 +128,7 @@ index ed8cd5f3..b25ac64e 100644
  
          for (let i = 0, j = this.children.length; i < j; ++i)
          {
-@@ -500,6 +500,122 @@ export default class Container extends DisplayObject
+@@ -500,6 +501,127 @@ export default class Container extends DisplayObject
      }
  
      /**
@@ -158,6 +222,11 @@ index ed8cd5f3..b25ac64e 100644
 +            }
 +        }
 +
++        if (this.blendMode === BLEND_MODES.ADD)
++        {
++            this.renderedObject.a = 0.5;
++        }
++
 +        function innerRenderMask(maskRenderedObject)
 +        {
 +            if (!this.renderedObjectMaskContainer)
@@ -187,7 +256,7 @@ index ed8cd5f3..b25ac64e 100644
       * Renders the object using the Canvas renderer
       *
       * @param {PIXI.CanvasRenderer} renderer - The renderer
-@@ -530,6 +646,26 @@ export default class Container extends DisplayObject
+@@ -530,6 +652,26 @@ export default class Container extends DisplayObject
      }
  
      /**
@@ -214,7 +283,7 @@ index ed8cd5f3..b25ac64e 100644
       * Removes all internal references and listeners as well as removes children from the display list.
       * Do not use a Container after calling `destroy`.
       *
-@@ -546,6 +682,23 @@ export default class Container extends DisplayObject
+@@ -546,6 +688,23 @@ export default class Container extends DisplayObject
      {
          super.destroy();
  
@@ -238,7 +307,7 @@ index ed8cd5f3..b25ac64e 100644
          const destroyChildren = typeof options === 'boolean' ? options : options && options.children;
  
          const oldChildren = this.removeChildren(0, this.children.length);
-@@ -566,7 +719,14 @@ export default class Container extends DisplayObject
+@@ -566,7 +725,14 @@ export default class Container extends DisplayObject
       */
      get width()
      {
@@ -254,7 +323,7 @@ index ed8cd5f3..b25ac64e 100644
      }
  
      set width(value) // eslint-disable-line require-jsdoc
-@@ -592,7 +752,14 @@ export default class Container extends DisplayObject
+@@ -592,7 +758,14 @@ export default class Container extends DisplayObject
       */
      get height()
      {
@@ -271,7 +340,7 @@ index ed8cd5f3..b25ac64e 100644
  
      set height(value) // eslint-disable-line require-jsdoc
 diff --git a/src/core/display/DisplayObject.js b/src/core/display/DisplayObject.js
-index 4e6c77d0..41f69acf 100644
+index 4e6c77d..3facb44 100644
 --- a/src/core/display/DisplayObject.js
 +++ b/src/core/display/DisplayObject.js
 @@ -5,6 +5,7 @@ import TransformStatic from './TransformStatic';
@@ -282,7 +351,15 @@ index 4e6c77d0..41f69acf 100644
  // _tempDisplayObjectParent = new DisplayObject();
  
  /**
-@@ -331,6 +332,16 @@ export default class DisplayObject extends EventEmitter
+@@ -36,6 +37,7 @@ export default class DisplayObject extends EventEmitter
+          *
+          * @member {PIXI.TransformBase}
+          */
++
+         this.transform = new TransformClass();
+ 
+         /**
+@@ -331,6 +333,16 @@ export default class DisplayObject extends EventEmitter
      }
  
      /**
@@ -299,7 +376,7 @@ index 4e6c77d0..41f69acf 100644
       * Set the parent Container of this DisplayObject
       *
       * @param {PIXI.Container} container - The Container to add this DisplayObject to
-@@ -578,16 +589,23 @@ export default class DisplayObject extends EventEmitter
+@@ -578,16 +590,23 @@ export default class DisplayObject extends EventEmitter
  
      set mask(value) // eslint-disable-line require-jsdoc
      {
@@ -331,7 +408,7 @@ index 4e6c77d0..41f69acf 100644
  
 diff --git a/src/core/graphics/GraphicsV8.js b/src/core/graphics/GraphicsV8.js
 new file mode 100644
-index 00000000..b409c298
+index 0000000..b409c29
 --- /dev/null
 +++ b/src/core/graphics/GraphicsV8.js
 @@ -0,0 +1,1040 @@
@@ -1377,10 +1454,10 @@ index 00000000..b409c298
 +GraphicsV8._SPRITE_TEXTURE = null;
 diff --git a/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
 new file mode 100644
-index 00000000..74832d00
+index 0000000..52cb072
 --- /dev/null
 +++ b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,400 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import { SHAPES } from '../../const';
 +import { hex2rgb, rgb2rgba, rgba2hex } from '../../utils';
@@ -1665,6 +1742,7 @@ index 00000000..74832d00
 +            t: 'rect',
 +            parent: parentRenderedObject,
 +            clip: true,
++            fillColor: 0x0,
 +        });
 +
 +        circle.w = spriteWidth * ratio;
@@ -1781,7 +1859,7 @@ index 00000000..74832d00
 +
 +PXSceneRenderer.registerPlugin('graphicsV8', PXSceneGraphicsRenderer);
 diff --git a/src/core/index.js b/src/core/index.js
-index f03fe153..7b7f772b 100644
+index f03fe15..7b7f772 100644
 --- a/src/core/index.js
 +++ b/src/core/index.js
 @@ -9,8 +9,9 @@ import * as ticker from './ticker';
@@ -1816,7 +1894,7 @@ index f03fe153..7b7f772b 100644
  export { default as BaseTexture } from './textures/BaseTexture';
 diff --git a/src/core/renderers/pxscene/PXSceneRenderer.js b/src/core/renderers/pxscene/PXSceneRenderer.js
 new file mode 100644
-index 00000000..1e384eaa
+index 0000000..1e384ea
 --- /dev/null
 +++ b/src/core/renderers/pxscene/PXSceneRenderer.js
 @@ -0,0 +1,265 @@
@@ -2087,7 +2165,7 @@ index 00000000..1e384eaa
 +pluginTarget.mixin(PXSceneRenderer);
 diff --git a/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js b/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
 new file mode 100644
-index 00000000..6ccc119f
+index 0000000..6ccc119
 --- /dev/null
 +++ b/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
 @@ -0,0 +1,82 @@
@@ -2174,7 +2252,7 @@ index 00000000..6ccc119f
 +    }
 +}
 diff --git a/src/core/sprites/Sprite.js b/src/core/sprites/Sprite.js
-index 28b0b18e..533f1b1f 100644
+index 28b0b18..1cdd966 100644
 --- a/src/core/sprites/Sprite.js
 +++ b/src/core/sprites/Sprite.js
 @@ -1,5 +1,5 @@
@@ -2269,7 +2347,26 @@ index 28b0b18e..533f1b1f 100644
              if (tempPoint.y > y1 && tempPoint.y < y1 + height)
              {
                  return true;
-@@ -484,21 +520,109 @@ export default class Sprite extends Container
+@@ -432,6 +468,18 @@ export default class Sprite extends Container
+         this.shader = null;
+     }
+ 
++    /**
++     * force the sprite recreate when render next time.
++     */
++    forceCreate()
++    {
++        if (this.renderedObject)
++        {
++            this.renderedObject.dispose();
++            this.renderedObject = null;
++        }
++    }
++
+     // some helper functions..
+ 
+     /**
+@@ -484,21 +532,109 @@ export default class Sprite extends Container
      }
  
      /**
@@ -2382,7 +2479,7 @@ index 28b0b18e..533f1b1f 100644
      }
  
      /**
-@@ -508,15 +632,73 @@ export default class Sprite extends Container
+@@ -508,15 +644,73 @@ export default class Sprite extends Container
       */
      get height()
      {
@@ -2459,7 +2556,7 @@ index 28b0b18e..533f1b1f 100644
      }
  
      /**
-@@ -577,8 +759,9 @@ export default class Sprite extends Container
+@@ -577,8 +771,9 @@ export default class Sprite extends Container
  
          this._textureID = -1;
          this._textureTrimmedID = -1;
@@ -2472,10 +2569,10 @@ index 28b0b18e..533f1b1f 100644
              if (value.baseTexture.hasLoaded)
 diff --git a/src/core/sprites/pxscene/PXSceneSpriteRenderer.js b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
 new file mode 100644
-index 00000000..3a10c4c9
+index 0000000..ffc36d0
 --- /dev/null
 +++ b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,465 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import RenderTexture from '../../textures/RenderTexture';
 +import { Point } from '../../math';
@@ -2802,18 +2899,21 @@ index 00000000..3a10c4c9
 +
 +            if (texture.rotate)
 +            {
-+                const rotateParam = this._getRotationParamByRotate(texture.rotate);
++                const rotateParam = this._getRotationParamByRotate(texture.rotate, sprite.spine);
 +
 +                if (rotateParam)
 +                {
-+                    renderedObject.cx = spriteWidth * 0.5;
-+                    renderedObject.cy = spriteHeight * 0.5;
-+                    renderedObject.x = attr.x - (attr.sx * renderedObject.cx);
-+                    renderedObject.y = attr.y - (attr.sy * renderedObject.cy);
-+
-+                    renderedObject.sx = attr.sx * rotateParam.sx;
-+                    renderedObject.sy = attr.sy * rotateParam.sy;
 +                    renderedObject.r = attr.r + rotateParam.r;
++                    if (!sprite.spine)
++                    {
++                        renderedObject.cx = spriteWidth * 0.5;
++                        renderedObject.cy = spriteHeight * 0.5;
++                        renderedObject.x = attr.x - (attr.sx * renderedObject.cx);
++                        renderedObject.y = attr.y - (attr.sy * renderedObject.cy);
++
++                        renderedObject.sx = attr.sx * rotateParam.sx;
++                        renderedObject.sy = attr.sy * rotateParam.sy;
++                    }
 +                }
 +            }
 +
@@ -2842,10 +2942,11 @@ index 00000000..3a10c4c9
 +     * Calculate rotation param by rotate (from texture packer)
 +     *
 +     * @param {Number} rotation - Rotation (from texture packer)
++     * @param {Boolean} isSpine - Sprite is SpineSprite or not
 +     * @returns {Object|null} Rotation param
 +     * @private
 +     */
-+    _getRotationParamByRotate(rotation)
++    _getRotationParamByRotate(rotation, isSpine)
 +    {
 +        if (rotation % 2 !== 0)
 +        {
@@ -2861,13 +2962,16 @@ index 00000000..3a10c4c9
 +            flip = true;
 +        }
 +
-+        if (rotation === 2)
++        if (!isSpine)
 +        {
-+            rotation = 6;
-+        }
-+        else if (rotation === 6)
-+        {
-+            rotation = 2;
++            if (rotation === 2)
++            {
++                rotation = 6;
++            }
++            else if (rotation === 6)
++            {
++                rotation = 2;
++            }
 +        }
 +
 +        const degree = rotation * 45;
@@ -2935,7 +3039,7 @@ index 00000000..3a10c4c9
 +
 +PXSceneRenderer.registerPlugin('sprite', PXSceneSpriteRenderer);
 diff --git a/src/core/text/Text.js b/src/core/text/Text.js
-index cec8c323..dcd2bfeb 100644
+index cec8c32..dcd2bfe 100644
 --- a/src/core/text/Text.js
 +++ b/src/core/text/Text.js
 @@ -1,911 +1,14 @@
@@ -3861,7 +3965,7 @@ index cec8c323..dcd2bfeb 100644
 +module.exports = Text;
 diff --git a/src/core/text/TextV8.js b/src/core/text/TextV8.js
 new file mode 100644
-index 00000000..c015fbe9
+index 0000000..c015fbe
 --- /dev/null
 +++ b/src/core/text/TextV8.js
 @@ -0,0 +1,386 @@
@@ -4253,7 +4357,7 @@ index 00000000..c015fbe9
 +TextV8.fontResourceCache = {};
 diff --git a/src/core/text/TextWeb.js b/src/core/text/TextWeb.js
 new file mode 100644
-index 00000000..93d923a8
+index 0000000..93d923a
 --- /dev/null
 +++ b/src/core/text/TextWeb.js
 @@ -0,0 +1,915 @@
@@ -5174,7 +5278,7 @@ index 00000000..93d923a8
 +}
 diff --git a/src/core/text/pxscene/PXSceneTextRenderer.js b/src/core/text/pxscene/PXSceneTextRenderer.js
 new file mode 100644
-index 00000000..4971e742
+index 0000000..4971e74
 --- /dev/null
 +++ b/src/core/text/pxscene/PXSceneTextRenderer.js
 @@ -0,0 +1,191 @@
@@ -5370,7 +5474,7 @@ index 00000000..4971e742
 +
 +PXSceneRenderer.registerPlugin('TextV8', PXSceneTextRenderer);
 diff --git a/src/core/textures/BaseRenderTexture.js b/src/core/textures/BaseRenderTexture.js
-index aa727f0f..d6226b37 100644
+index aa727f0..d6226b3 100644
 --- a/src/core/textures/BaseRenderTexture.js
 +++ b/src/core/textures/BaseRenderTexture.js
 @@ -80,6 +80,14 @@ export default class BaseRenderTexture extends BaseTexture
@@ -5389,7 +5493,7 @@ index aa727f0f..d6226b37 100644
           *
           * @member {boolean}
 diff --git a/src/core/textures/BaseTexture.js b/src/core/textures/BaseTexture.js
-index 71a992b5..a573be9c 100644
+index 71a992b..a573be9 100644
 --- a/src/core/textures/BaseTexture.js
 +++ b/src/core/textures/BaseTexture.js
 @@ -1,6 +1,6 @@
@@ -5422,7 +5526,7 @@ index 71a992b5..a573be9c 100644
                  image.crossOrigin = determineCrossOrigin(imageUrl);
              }
 diff --git a/src/core/textures/Texture.js b/src/core/textures/Texture.js
-index d5100756..2f1ccff8 100644
+index d510075..2f1ccff 100644
 --- a/src/core/textures/Texture.js
 +++ b/src/core/textures/Texture.js
 @@ -3,7 +3,7 @@ import VideoBaseTexture from './VideoBaseTexture';
@@ -5444,7 +5548,7 @@ index d5100756..2f1ccff8 100644
          /**
           * This will let a renderer know that a texture has been updated (used mainly for webGL uv updates)
 diff --git a/src/core/ticker/Ticker.js b/src/core/ticker/Ticker.js
-index d98a1f0d..94726b94 100644
+index d98a1f0..94726b9 100644
 --- a/src/core/ticker/Ticker.js
 +++ b/src/core/ticker/Ticker.js
 @@ -1,9 +1,85 @@
@@ -5572,7 +5676,7 @@ index d98a1f0d..94726b94 100644
          let elapsedMS;
  
 diff --git a/src/core/utils/canUploadSameBuffer.js b/src/core/utils/canUploadSameBuffer.js
-index eb4ae5cb..e48dff20 100644
+index eb4ae5c..e48dff2 100644
 --- a/src/core/utils/canUploadSameBuffer.js
 +++ b/src/core/utils/canUploadSameBuffer.js
 @@ -3,7 +3,7 @@ export default function canUploadSameBuffer()
@@ -5585,7 +5689,7 @@ index eb4ae5cb..e48dff20 100644
      return !ios;
  }
 diff --git a/src/core/utils/index.js b/src/core/utils/index.js
-index 2f9c71b7..9b346240 100644
+index 2f9c71b..9b34624 100644
 --- a/src/core/utils/index.js
 +++ b/src/core/utils/index.js
 @@ -86,6 +86,54 @@ export function hex2string(hex)
@@ -5738,7 +5842,7 @@ index 2f9c71b7..9b346240 100644
   *
   * @memberof PIXI.utils
 diff --git a/src/extras/cacheAsBitmap.js b/src/extras/cacheAsBitmap.js
-index 5dd56407..c51d423c 100644
+index 5dd5640..c51d423 100644
 --- a/src/extras/cacheAsBitmap.js
 +++ b/src/extras/cacheAsBitmap.js
 @@ -1,4 +1,6 @@
@@ -5866,7 +5970,7 @@ index 5dd56407..c51d423c 100644
   *
   * @private
 diff --git a/src/extras/index.js b/src/extras/index.js
-index bbd8bbf2..3ca7a923 100644
+index bbd8bbf..3ca7a92 100644
 --- a/src/extras/index.js
 +++ b/src/extras/index.js
 @@ -4,6 +4,7 @@
@@ -5879,10 +5983,10 @@ index bbd8bbf2..3ca7a923 100644
  
 diff --git a/src/extras/pxscene/PXSceneTilingSpriteRenderer.js b/src/extras/pxscene/PXSceneTilingSpriteRenderer.js
 new file mode 100644
-index 00000000..b7b54a5b
+index 0000000..9c687ee
 --- /dev/null
 +++ b/src/extras/pxscene/PXSceneTilingSpriteRenderer.js
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,157 @@
 +import PXSceneRenderer from '../../core/renderers/pxscene/PXSceneRenderer';
 +
 +import { Point } from '../../core/math';
@@ -5951,9 +6055,11 @@ index 00000000..b7b54a5b
 +                const height = this.renderer.context.h;
 +                const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
 +
++                const parent = sprite.parent.renderedObject || this.renderer.context;
++
 +                sprite.renderedObject = this.renderer.view.create({
 +                    t: 'image',
-+                    parent: this.renderer.context,
++                    parent,
 +                    x: attr.x,
 +                    y: attr.y,
 +                    cx: attr.cx,
@@ -6039,7 +6145,7 @@ index 00000000..b7b54a5b
 +
 +PXSceneRenderer.registerPlugin('tilingSprite', PXSceneTilingSpriteRenderer);
 diff --git a/src/interaction/InteractionManager.js b/src/interaction/InteractionManager.js
-index ac742252..331dc83b 100644
+index ac74225..331dc83 100644
 --- a/src/interaction/InteractionManager.js
 +++ b/src/interaction/InteractionManager.js
 @@ -4,6 +4,7 @@ import InteractionEvent from './InteractionEvent';
@@ -6430,304 +6536,43 @@ index ac742252..331dc83b 100644
  core.WebGLRenderer.registerPlugin('interaction', InteractionManager);
  core.CanvasRenderer.registerPlugin('interaction', InteractionManager);
 +core.PXSceneRenderer.registerPlugin('interaction', InteractionManager);
-diff --git a/src/loaders/bitmapFontParser.js b/src/loaders/bitmapFontParser.js
-deleted file mode 100644
-index f4cf9967..00000000
+diff --git a/src/loaders/bitmapFontParser.js b/src/loaders/browser/bitmapFontParser.js
+similarity index 97%
+rename from src/loaders/bitmapFontParser.js
+rename to src/loaders/browser/bitmapFontParser.js
+index f4cf996..8199c48 100644
 --- a/src/loaders/bitmapFontParser.js
-+++ /dev/null
-@@ -1,95 +0,0 @@
--import * as path from 'path';
--import { utils } from '../core';
--import { Resource } from 'resource-loader';
--import { BitmapText } from '../extras';
--
--/**
-- * Register a BitmapText font from loader resource.
-- *
-- * @function parseBitmapFontData
-- * @memberof PIXI.loaders
-- * @param {PIXI.loaders.Resource} resource - Loader resource.
-- * @param {PIXI.Texture} texture - Reference to texture.
-- */
--export function parse(resource, texture)
--{
--    resource.bitmapFont = BitmapText.registerFont(resource.data, texture);
--}
--
--export default function ()
--{
--    return function bitmapFontParser(resource, next)
--    {
--        // skip if no data or not xml data
--        if (!resource.data || resource.type !== Resource.TYPE.XML)
--        {
--            next();
--
--            return;
--        }
--
--        // skip if not bitmap font data, using some silly duck-typing
--        if (resource.data.getElementsByTagName('page').length === 0
--            || resource.data.getElementsByTagName('info').length === 0
--            || resource.data.getElementsByTagName('info')[0].getAttribute('face') === null
--        )
--        {
--            next();
--
--            return;
--        }
--
--        let xmlUrl = !resource.isDataUrl ? path.dirname(resource.url) : '';
--
--        if (resource.isDataUrl)
--        {
--            if (xmlUrl === '.')
--            {
--                xmlUrl = '';
--            }
--
--            if (this.baseUrl && xmlUrl)
--            {
--                // if baseurl has a trailing slash then add one to xmlUrl so the replace works below
--                if (this.baseUrl.charAt(this.baseUrl.length - 1) === '/')
--                {
--                    xmlUrl += '/';
--                }
--
--                // remove baseUrl from xmlUrl
--                xmlUrl = xmlUrl.replace(this.baseUrl, '');
--            }
--        }
--
--        // if there is an xmlUrl now, it needs a trailing slash. Ensure that it does if the string isn't empty.
--        if (xmlUrl && xmlUrl.charAt(xmlUrl.length - 1) !== '/')
--        {
--            xmlUrl += '/';
--        }
--
--        const textureUrl = xmlUrl + resource.data.getElementsByTagName('page')[0].getAttribute('file');
--
--        if (utils.TextureCache[textureUrl])
--        {
--            // reuse existing texture
--            parse(resource, utils.TextureCache[textureUrl]);
--            next();
--        }
--        else
--        {
--            const loadOptions = {
--                crossOrigin: resource.crossOrigin,
--                loadType: Resource.LOAD_TYPE.IMAGE,
--                metadata: resource.metadata.imageMetadata,
--                parentResource: resource,
--            };
--
--            // load the texture for the font
--            this.add(`${resource.name}_image`, textureUrl, loadOptions, (res) =>
--            {
--                parse(resource, res.texture);
--                next();
--            });
--        }
--    };
--}
-diff --git a/src/loaders/browser/bitmapFontParser.js b/src/loaders/browser/bitmapFontParser.js
-new file mode 100644
-index 00000000..8199c48a
---- /dev/null
 +++ b/src/loaders/browser/bitmapFontParser.js
-@@ -0,0 +1,95 @@
-+import * as path from 'path';
+@@ -1,7 +1,7 @@
+ import * as path from 'path';
+-import { utils } from '../core';
 +import { utils } from '../../core';
-+import { Resource } from 'resource-loader';
+ import { Resource } from 'resource-loader';
+-import { BitmapText } from '../extras';
 +import { BitmapText } from '../../extras';
-+
-+/**
-+ * Register a BitmapText font from loader resource.
-+ *
-+ * @function parseBitmapFontData
-+ * @memberof PIXI.loaders
-+ * @param {PIXI.loaders.Resource} resource - Loader resource.
-+ * @param {PIXI.Texture} texture - Reference to texture.
-+ */
-+export function parse(resource, texture)
-+{
-+    resource.bitmapFont = BitmapText.registerFont(resource.data, texture);
-+}
-+
-+export default function ()
-+{
-+    return function bitmapFontParser(resource, next)
-+    {
-+        // skip if no data or not xml data
-+        if (!resource.data || resource.type !== Resource.TYPE.XML)
-+        {
-+            next();
-+
-+            return;
-+        }
-+
-+        // skip if not bitmap font data, using some silly duck-typing
-+        if (resource.data.getElementsByTagName('page').length === 0
-+            || resource.data.getElementsByTagName('info').length === 0
-+            || resource.data.getElementsByTagName('info')[0].getAttribute('face') === null
-+        )
-+        {
-+            next();
-+
-+            return;
-+        }
-+
-+        let xmlUrl = !resource.isDataUrl ? path.dirname(resource.url) : '';
-+
-+        if (resource.isDataUrl)
-+        {
-+            if (xmlUrl === '.')
-+            {
-+                xmlUrl = '';
-+            }
-+
-+            if (this.baseUrl && xmlUrl)
-+            {
-+                // if baseurl has a trailing slash then add one to xmlUrl so the replace works below
-+                if (this.baseUrl.charAt(this.baseUrl.length - 1) === '/')
-+                {
-+                    xmlUrl += '/';
-+                }
-+
-+                // remove baseUrl from xmlUrl
-+                xmlUrl = xmlUrl.replace(this.baseUrl, '');
-+            }
-+        }
-+
-+        // if there is an xmlUrl now, it needs a trailing slash. Ensure that it does if the string isn't empty.
-+        if (xmlUrl && xmlUrl.charAt(xmlUrl.length - 1) !== '/')
-+        {
-+            xmlUrl += '/';
-+        }
-+
-+        const textureUrl = xmlUrl + resource.data.getElementsByTagName('page')[0].getAttribute('file');
-+
-+        if (utils.TextureCache[textureUrl])
-+        {
-+            // reuse existing texture
-+            parse(resource, utils.TextureCache[textureUrl]);
-+            next();
-+        }
-+        else
-+        {
-+            const loadOptions = {
-+                crossOrigin: resource.crossOrigin,
-+                loadType: Resource.LOAD_TYPE.IMAGE,
-+                metadata: resource.metadata.imageMetadata,
-+                parentResource: resource,
-+            };
-+
-+            // load the texture for the font
-+            this.add(`${resource.name}_image`, textureUrl, loadOptions, (res) =>
-+            {
-+                parse(resource, res.texture);
-+                next();
-+            });
-+        }
-+    };
-+}
-diff --git a/src/loaders/browser/loader.js b/src/loaders/browser/loader.js
-new file mode 100644
-index 00000000..807a4c74
---- /dev/null
+ 
+ /**
+  * Register a BitmapText font from loader resource.
+diff --git a/src/loaders/loader.js b/src/loaders/browser/loader.js
+similarity index 95%
+rename from src/loaders/loader.js
+rename to src/loaders/browser/loader.js
+index 0a670cb..807a4c7 100644
+--- a/src/loaders/loader.js
 +++ b/src/loaders/browser/loader.js
-@@ -0,0 +1,88 @@
-+import ResourceLoader from 'resource-loader';
-+import { blobMiddlewareFactory } from 'resource-loader/lib/middlewares/parsing/blob';
-+import EventEmitter from 'eventemitter3';
+@@ -1,8 +1,8 @@
+ import ResourceLoader from 'resource-loader';
+ import { blobMiddlewareFactory } from 'resource-loader/lib/middlewares/parsing/blob';
+ import EventEmitter from 'eventemitter3';
+-import textureParser from './textureParser';
+-import spritesheetParser from './spritesheetParser';
 +import textureParser from '../utils/textureParser';
 +import spritesheetParser from '../utils/spritesheetParser';
-+import bitmapFontParser from './bitmapFontParser';
-+
-+/**
-+ *
-+ * The new loader, extends Resource Loader by Chad Engler : https://github.com/englercj/resource-loader
-+ *
-+ * ```js
-+ * let loader = PIXI.loader; // pixi exposes a premade instance for you to use.
-+ * //or
-+ * let loader = new PIXI.loaders.Loader(); // you can also create your own if you want
-+ *
-+ * loader.add('bunny', 'data/bunny.png');
-+ * loader.add('spaceship', 'assets/spritesheet.json');
-+ * loader.add('scoreFont', 'assets/score.fnt');
-+ *
-+ * loader.once('complete',onAssetsLoaded);
-+ *
-+ * loader.load();
-+ * ```
-+ *
-+ * @see https://github.com/englercj/resource-loader
-+ *
-+ * @class
-+ * @extends module:resource-loader.ResourceLoader
-+ * @memberof PIXI.loaders
-+ */
-+export default class Loader extends ResourceLoader
-+{
-+    /**
-+     * @param {string} [baseUrl=''] - The base url for all resources loaded by this loader.
-+     * @param {number} [concurrency=10] - The number of resources to load concurrently.
-+     */
-+    constructor(baseUrl, concurrency)
-+    {
-+        super(baseUrl, concurrency);
-+        EventEmitter.call(this);
-+
-+        for (let i = 0; i < Loader._pixiMiddleware.length; ++i)
-+        {
-+            this.use(Loader._pixiMiddleware[i]());
-+        }
-+
-+        // Compat layer, translate the new v2 signals into old v1 events.
-+        this.onStart.add((l) => this.emit('start', l));
-+        this.onProgress.add((l, r) => this.emit('progress', l, r));
-+        this.onError.add((e, l, r) => this.emit('error', e, l, r));
-+        this.onLoad.add((l, r) => this.emit('load', l, r));
-+        this.onComplete.add((l, r) => this.emit('complete', l, r));
-+    }
-+
-+    /**
-+     * Adds a default middleware to the pixi loader.
-+     *
-+     * @static
-+     * @param {Function} fn - The middleware to add.
-+     */
-+    static addPixiMiddleware(fn)
-+    {
-+        Loader._pixiMiddleware.push(fn);
-+    }
-+}
-+
-+// Copy EE3 prototype (mixin)
-+for (const k in EventEmitter.prototype)
-+{
-+    Loader.prototype[k] = EventEmitter.prototype[k];
-+}
-+
-+Loader._pixiMiddleware = [
-+    // parse any blob into more usable objects (e.g. Image)
-+    blobMiddlewareFactory,
-+    // parse any Image objects into textures
-+    textureParser,
-+    // parse any spritesheet data into multiple textures
-+    spritesheetParser,
-+    // parse bitmap font data into multiple textures
-+    bitmapFontParser,
-+];
-+
-+// Add custom extentions
-+const Resource = ResourceLoader.Resource;
-+
-+Resource.setExtensionXhrType('fnt', Resource.XHR_RESPONSE_TYPE.DOCUMENT);
+ import bitmapFontParser from './bitmapFontParser';
+ 
+ /**
 diff --git a/src/loaders/index.js b/src/loaders/index.js
-index 51897931..d13c8d60 100644
+index 5189793..d13c8d6 100644
 --- a/src/loaders/index.js
 +++ b/src/loaders/index.js
 @@ -1,15 +1,43 @@
@@ -6783,103 +6628,9 @@ index 51897931..d13c8d60 100644
 +        textureParser,
 +    };
 +}
-diff --git a/src/loaders/loader.js b/src/loaders/loader.js
-deleted file mode 100644
-index 0a670cb8..00000000
---- a/src/loaders/loader.js
-+++ /dev/null
-@@ -1,88 +0,0 @@
--import ResourceLoader from 'resource-loader';
--import { blobMiddlewareFactory } from 'resource-loader/lib/middlewares/parsing/blob';
--import EventEmitter from 'eventemitter3';
--import textureParser from './textureParser';
--import spritesheetParser from './spritesheetParser';
--import bitmapFontParser from './bitmapFontParser';
--
--/**
-- *
-- * The new loader, extends Resource Loader by Chad Engler : https://github.com/englercj/resource-loader
-- *
-- * ```js
-- * let loader = PIXI.loader; // pixi exposes a premade instance for you to use.
-- * //or
-- * let loader = new PIXI.loaders.Loader(); // you can also create your own if you want
-- *
-- * loader.add('bunny', 'data/bunny.png');
-- * loader.add('spaceship', 'assets/spritesheet.json');
-- * loader.add('scoreFont', 'assets/score.fnt');
-- *
-- * loader.once('complete',onAssetsLoaded);
-- *
-- * loader.load();
-- * ```
-- *
-- * @see https://github.com/englercj/resource-loader
-- *
-- * @class
-- * @extends module:resource-loader.ResourceLoader
-- * @memberof PIXI.loaders
-- */
--export default class Loader extends ResourceLoader
--{
--    /**
--     * @param {string} [baseUrl=''] - The base url for all resources loaded by this loader.
--     * @param {number} [concurrency=10] - The number of resources to load concurrently.
--     */
--    constructor(baseUrl, concurrency)
--    {
--        super(baseUrl, concurrency);
--        EventEmitter.call(this);
--
--        for (let i = 0; i < Loader._pixiMiddleware.length; ++i)
--        {
--            this.use(Loader._pixiMiddleware[i]());
--        }
--
--        // Compat layer, translate the new v2 signals into old v1 events.
--        this.onStart.add((l) => this.emit('start', l));
--        this.onProgress.add((l, r) => this.emit('progress', l, r));
--        this.onError.add((e, l, r) => this.emit('error', e, l, r));
--        this.onLoad.add((l, r) => this.emit('load', l, r));
--        this.onComplete.add((l, r) => this.emit('complete', l, r));
--    }
--
--    /**
--     * Adds a default middleware to the pixi loader.
--     *
--     * @static
--     * @param {Function} fn - The middleware to add.
--     */
--    static addPixiMiddleware(fn)
--    {
--        Loader._pixiMiddleware.push(fn);
--    }
--}
--
--// Copy EE3 prototype (mixin)
--for (const k in EventEmitter.prototype)
--{
--    Loader.prototype[k] = EventEmitter.prototype[k];
--}
--
--Loader._pixiMiddleware = [
--    // parse any blob into more usable objects (e.g. Image)
--    blobMiddlewareFactory,
--    // parse any Image objects into textures
--    textureParser,
--    // parse any spritesheet data into multiple textures
--    spritesheetParser,
--    // parse bitmap font data into multiple textures
--    bitmapFontParser,
--];
--
--// Add custom extentions
--const Resource = ResourceLoader.Resource;
--
--Resource.setExtensionXhrType('fnt', Resource.XHR_RESPONSE_TYPE.DOCUMENT);
 diff --git a/src/loaders/pxscene/loader.js b/src/loaders/pxscene/loader.js
 new file mode 100644
-index 00000000..1125a573
+index 0000000..1125a57
 --- /dev/null
 +++ b/src/loaders/pxscene/loader.js
 @@ -0,0 +1,661 @@
@@ -7546,7 +7297,7 @@ index 00000000..1125a573
 +];
 diff --git a/src/loaders/pxscene/resource.js b/src/loaders/pxscene/resource.js
 new file mode 100644
-index 00000000..605c09a3
+index 0000000..605c09a
 --- /dev/null
 +++ b/src/loaders/pxscene/resource.js
 @@ -0,0 +1,748 @@
@@ -8298,103 +8049,18 @@ index 00000000..605c09a3
 +
 +    map[extname] = val;
 +}
-diff --git a/src/loaders/spritesheetParser.js b/src/loaders/spritesheetParser.js
-deleted file mode 100644
-index e57dfb28..00000000
+diff --git a/src/loaders/spritesheetParser.js b/src/loaders/utils/spritesheetParser.js
+similarity index 84%
+rename from src/loaders/spritesheetParser.js
+rename to src/loaders/utils/spritesheetParser.js
+index e57dfb2..51cecdf 100644
 --- a/src/loaders/spritesheetParser.js
-+++ /dev/null
-@@ -1,58 +0,0 @@
--import { Resource } from 'resource-loader';
--import path from 'path';
--import { Spritesheet } from '../core';
--
--export default function ()
--{
--    return function spritesheetParser(resource, next)
--    {
--        let resourcePath;
--        const imageResourceName = `${resource.name}_image`;
--
--        // skip if no data, its not json, it isn't spritesheet data, or the image resource already exists
--        if (!resource.data
--            || resource.type !== Resource.TYPE.JSON
--            || !resource.data.frames
--            || this.resources[imageResourceName]
--        )
--        {
--            next();
--
--            return;
--        }
--
--        const loadOptions = {
--            crossOrigin: resource.crossOrigin,
--            loadType: Resource.LOAD_TYPE.IMAGE,
--            metadata: resource.metadata.imageMetadata,
--            parentResource: resource,
--        };
--
--        // Prepend url path unless the resource image is a data url
--        if (resource.isDataUrl)
--        {
--            resourcePath = resource.data.meta.image;
--        }
--        else
--        {
--            resourcePath = `${path.dirname(resource.url.replace(this.baseUrl, ''))}/${resource.data.meta.image}`;
--        }
--
--        // load the image for this sheet
--        this.add(imageResourceName, resourcePath, loadOptions, function onImageLoad(res)
--        {
--            const spritesheet = new Spritesheet(
--                res.texture.baseTexture,
--                resource.data,
--                resource.url
--            );
--
--            spritesheet.parse(() =>
--            {
--                resource.spritesheet = spritesheet;
--                resource.textures = spritesheet.textures;
--                next();
--            });
--        });
--    };
--}
-diff --git a/src/loaders/textureParser.js b/src/loaders/textureParser.js
-deleted file mode 100644
-index 480edc1c..00000000
---- a/src/loaders/textureParser.js
-+++ /dev/null
-@@ -1,19 +0,0 @@
--import { Resource } from 'resource-loader';
--import Texture from '../core/textures/Texture';
--
--export default function ()
--{
--    return function textureParser(resource, next)
--    {
--        // create a new texture if the data is an Image object
--        if (resource.data && resource.type === Resource.TYPE.IMAGE)
--        {
--            resource.texture = Texture.fromLoader(
--                resource.data,
--                resource.url,
--                resource.name
--            );
--        }
--        next();
--    };
--}
-diff --git a/src/loaders/utils/spritesheetParser.js b/src/loaders/utils/spritesheetParser.js
-new file mode 100644
-index 00000000..51cecdff
---- /dev/null
 +++ b/src/loaders/utils/spritesheetParser.js
-@@ -0,0 +1,69 @@
+@@ -1,6 +1,17 @@
+-import { Resource } from 'resource-loader';
 +import { isV8 } from '../../core/utils';
-+import path from 'path';
+ import path from 'path';
+-import { Spritesheet } from '../core';
 +import { Spritesheet } from '../../core';
 +
 +let Resource;
@@ -8407,67 +8073,19 @@ index 00000000..51cecdff
 +{
 +    Resource = require('resource-loader'); // eslint-disable-line global-require
 +}
-+
-+export default function ()
-+{
-+    return function spritesheetParser(resource, next)
-+    {
-+        let resourcePath;
-+        const imageResourceName = `${resource.name}_image`;
-+
-+        // skip if no data, its not json, it isn't spritesheet data, or the image resource already exists
-+        if (!resource.data
-+            || resource.type !== Resource.TYPE.JSON
-+            || !resource.data.frames
-+            || this.resources[imageResourceName]
-+        )
-+        {
-+            next();
-+
-+            return;
-+        }
-+
-+        const loadOptions = {
-+            crossOrigin: resource.crossOrigin,
-+            loadType: Resource.LOAD_TYPE.IMAGE,
-+            metadata: resource.metadata.imageMetadata,
-+            parentResource: resource,
-+        };
-+
-+        // Prepend url path unless the resource image is a data url
-+        if (resource.isDataUrl)
-+        {
-+            resourcePath = resource.data.meta.image;
-+        }
-+        else
-+        {
-+            resourcePath = `${path.dirname(resource.url.replace(this.baseUrl, ''))}/${resource.data.meta.image}`;
-+        }
-+
-+        // load the image for this sheet
-+        this.add(imageResourceName, resourcePath, loadOptions, function onImageLoad(res)
-+        {
-+            const spritesheet = new Spritesheet(
-+                res.texture.baseTexture,
-+                resource.data,
-+                resource.url
-+            );
-+
-+            spritesheet.parse(() =>
-+            {
-+                resource.spritesheet = spritesheet;
-+                resource.textures = spritesheet.textures;
-+                next();
-+            });
-+        });
-+    };
-+}
-diff --git a/src/loaders/utils/textureParser.js b/src/loaders/utils/textureParser.js
-new file mode 100644
-index 00000000..b84b5a1f
---- /dev/null
+ 
+ export default function ()
+ {
+diff --git a/src/loaders/textureParser.js b/src/loaders/utils/textureParser.js
+similarity index 57%
+rename from src/loaders/textureParser.js
+rename to src/loaders/utils/textureParser.js
+index 480edc1..b84b5a1 100644
+--- a/src/loaders/textureParser.js
 +++ b/src/loaders/utils/textureParser.js
-@@ -0,0 +1,31 @@
+@@ -1,5 +1,17 @@
+-import { Resource } from 'resource-loader';
+-import Texture from '../core/textures/Texture';
 +import { isV8 } from '../../core/utils';
 +
 +let Resource;
@@ -8482,25 +8100,11 @@ index 00000000..b84b5a1f
 +}
 +
 +import Texture from '../../core/textures/Texture';
-+
-+export default function ()
-+{
-+    return function textureParser(resource, next)
-+    {
-+        // create a new texture if the data is an Image object
-+        if (resource.data && resource.type === Resource.TYPE.IMAGE)
-+        {
-+            resource.texture = Texture.fromLoader(
-+                resource.data,
-+                resource.url,
-+                resource.name
-+            );
-+        }
-+        next();
-+    };
-+}
+ 
+ export default function ()
+ {
 diff --git a/src/particles/ParticleContainer.js b/src/particles/ParticleContainer.js
-index 67796cf2..071db1c3 100644
+index 67796cf..071db1c 100644
 --- a/src/particles/ParticleContainer.js
 +++ b/src/particles/ParticleContainer.js
 @@ -1,4 +1,5 @@
@@ -8625,7 +8229,7 @@ index 67796cf2..071db1c3 100644
       *
       * @private
 diff --git a/src/polyfill/index.js b/src/polyfill/index.js
-index d963deec..f54d5709 100644
+index d963dee..f54d570 100644
 --- a/src/polyfill/index.js
 +++ b/src/polyfill/index.js
 @@ -1,23 +1,29 @@
@@ -8672,3 +8276,6 @@ index d963deec..f54d5709 100644
 +        window.Uint16Array = Array;
 +    }
  }
+-- 
+2.10.1 (Apple Git-78)
+

@@ -1,6 +1,6 @@
 /*!
  * pixi.js - v4.3.4
- * Compiled Tue, 14 Mar 2017 03:28:10 UTC
+ * Compiled Fri, 07 Apr 2017 16:10:51 UTC
  *
  * pixi.js is licensed under the MIT License.
  * http://www.opensource.org/licenses/mit-license
@@ -1174,7 +1174,7 @@ if ('undefined' !== typeof module) {
 
 },{}],5:[function(require,module,exports){
 /**
- * isMobile.js v0.4.0
+ * isMobile.js v0.4.1
  *
  * A simple library to detect Apple phones and tablets,
  * Android phones and tablets, other mobile devices (like blackberry, mini-opera and windows phone),
@@ -1193,7 +1193,7 @@ if ('undefined' !== typeof module) {
         android_tablet      = /Android/i,
         amazon_phone        = /(?=.*\bAndroid\b)(?=.*\bSD4930UR\b)/i,
         amazon_tablet       = /(?=.*\bAndroid\b)(?=.*\b(?:KFOT|KFTT|KFJWI|KFJWA|KFSOWI|KFTHWI|KFTHWA|KFAPWI|KFAPWA|KFARWI|KFASWI|KFSAWI|KFSAWA)\b)/i,
-        windows_phone       = /IEMobile/i,
+        windows_phone       = /Windows Phone/i,
         windows_tablet      = /(?=.*\bWindows\b)(?=.*\bARM\b)/i, // Match 'Windows' AND 'ARM'
         other_blackberry    = /BlackBerry/i,
         other_blackberry_10 = /BB10/i,
@@ -21554,8 +21554,6 @@ var Loader = function () {
          * [`encodeURIComponent`](https://mdn.io/encodeURIComponent) before assigning this property.
          *
          * @example
-         *
-         * ```js
          * const loader = new Loader();
          *
          * loader.defaultQueryString = 'user=me&password=secret';
@@ -21567,7 +21565,6 @@ var Loader = function () {
          *
          * // This will request 'image.png?v=1&user=me&password=secret'
          * loader.add('iamge.png?v=1').load();
-         * ```
          */
         this.defaultQueryString = '';
 
@@ -22121,6 +22118,8 @@ var tempAnchor = null;
 var STATUS_NONE = 0;
 var STATUS_OK = 200;
 var STATUS_EMPTY = 204;
+var STATUS_IE_BUG_EMPTY = 1223;
+var STATUS_TYPE_OK = 2;
 
 // noop
 function _noop() {} /* empty */
@@ -22832,19 +22831,36 @@ var Resource = function () {
 
     Resource.prototype._xhrOnLoad = function _xhrOnLoad() {
         var xhr = this.xhr;
-        var status = typeof xhr.status === 'undefined' ? xhr.status : STATUS_OK; // XDR has no `.status`, assume 200.
+        var text = '';
+        var status = typeof xhr.status === 'undefined' ? STATUS_OK : xhr.status; // XDR has no `.status`, assume 200.
 
-        // status can be 0 when using the `file://` protocol so we also check if a response is set
-        if (status === STATUS_OK || status === STATUS_EMPTY || status === STATUS_NONE && xhr.responseText.length > 0) {
+        // responseText is accessible only if responseType is '' or 'text' and on older browsers
+        if (xhr.responseType === '' || xhr.responseType === 'text' || typeof xhr.responseType === 'undefined') {
+            text = xhr.responseText;
+        }
+
+        // status can be 0 when using the `file://` protocol so we also check if a response is set.
+        // If it has a response, we assume 200; otherwise a 0 status code with no contents is an aborted request.
+        if (status === STATUS_NONE && text.length > 0) {
+            status = STATUS_OK;
+        }
+        // handle IE9 bug: http://stackoverflow.com/questions/10046972/msie-returns-status-code-of-1223-for-ajax-request
+        else if (status === STATUS_IE_BUG_EMPTY) {
+                status = STATUS_EMPTY;
+            }
+
+        var statusType = status / 100 | 0;
+
+        if (statusType === STATUS_TYPE_OK) {
             // if text, just return it
             if (this.xhrType === Resource.XHR_RESPONSE_TYPE.TEXT) {
-                this.data = xhr.responseText;
+                this.data = text;
                 this.type = Resource.TYPE.TEXT;
             }
             // if json, parse into json object
             else if (this.xhrType === Resource.XHR_RESPONSE_TYPE.JSON) {
                     try {
-                        this.data = JSON.parse(xhr.responseText);
+                        this.data = JSON.parse(text);
                         this.type = Resource.TYPE.JSON;
                     } catch (e) {
                         this.abort('Error trying to parse loaded json: ' + e);
@@ -22858,11 +22874,11 @@ var Resource = function () {
                             if (window.DOMParser) {
                                 var domparser = new DOMParser();
 
-                                this.data = domparser.parseFromString(xhr.responseText, 'text/xml');
+                                this.data = domparser.parseFromString(text, 'text/xml');
                             } else {
                                 var div = document.createElement('div');
 
-                                div.innerHTML = xhr.responseText;
+                                div.innerHTML = text;
 
                                 this.data = div;
                             }
@@ -22876,7 +22892,7 @@ var Resource = function () {
                     }
                     // other types just return the response
                     else {
-                            this.data = xhr.response || xhr.responseText;
+                            this.data = xhr.response || text;
                         }
         } else {
             this.abort('[' + xhr.status + '] ' + xhr.statusText + ': ' + xhr.responseURL);
@@ -23240,7 +23256,7 @@ function _noop() {} /* empty */
 /**
  * Iterates an array in series.
  *
- * @param {*[]} array - Array to iterate.
+ * @param {Array.<*>} array - Array to iterate.
  * @param {function} iterator - Function to call for each element.
  * @param {function} callback - Function to call when done, or on error.
  */
@@ -25903,8 +25919,6 @@ var _DisplayObject2 = require('./DisplayObject');
 
 var _DisplayObject3 = _interopRequireDefault(_DisplayObject2);
 
-var _const = require('../const');
-
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -26474,10 +26488,6 @@ var Container = function (_DisplayObject) {
             }
         }
 
-        if (this.blendMode === _const.BLEND_MODES.ADD) {
-            this.renderedObject.a = 0.5;
-        }
-
         function innerRenderMask(maskRenderedObject) {
             if (!this.renderedObjectMaskContainer) {
                 this.renderedObjectMaskContainer = renderer.view.create({
@@ -26665,7 +26675,7 @@ var Container = function (_DisplayObject) {
 exports.default = Container;
 Container.prototype.containerUpdateTransform = Container.prototype.updateTransform;
 
-},{"../const":47,"../utils":131,"./DisplayObject":50}],50:[function(require,module,exports){
+},{"../utils":131,"./DisplayObject":50}],50:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -26739,7 +26749,6 @@ var DisplayObject = function (_EventEmitter) {
          *
          * @member {PIXI.TransformBase}
          */
-
         _this.transform = new TransformClass();
 
         /**
@@ -30436,15 +30445,13 @@ var _PXSceneRenderer2 = _interopRequireDefault(_PXSceneRenderer);
 
 var _const = require('../../const');
 
-var _utils = require('../../utils');
+var _earcut = require('earcut');
+
+var _earcut2 = _interopRequireDefault(_earcut);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-
-// Map: font family name -> fontUrl
-// Set key lowercase
-var CIRCLE_IMAGE_PATH = 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/circle-mask.png';
 
 /**
  * Renderer dedicated to drawing and batching graphics objects.
@@ -30453,7 +30460,6 @@ var CIRCLE_IMAGE_PATH = 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/ci
  * @private
  * @memberof PIXI
  */
-
 var PXSceneGraphicsRenderer = function () {
     /**
      * @param {PIXI.CanvasRenderer} renderer - The current PIXI renderer.
@@ -30509,8 +30515,6 @@ var PXSceneGraphicsRenderer = function () {
 
 
     PXSceneGraphicsRenderer.prototype.render = function render(graphics) {
-        var _this = this;
-
         if (!graphics || !graphics.renderedObject) {
             return;
         }
@@ -30530,15 +30534,17 @@ var PXSceneGraphicsRenderer = function () {
             graphics.dirty = false;
         }
 
-        var _loop = function _loop(i) {
+        for (var i = 0; i < graphics.graphicsData.length; i++) {
             var data = graphics.graphicsData[i];
             var shape = data.shape;
 
-            var fillColor = (0, _utils.rgba2hex)((0, _utils.rgb2rgba)((0, _utils.hex2rgb)(data._fillTint)));
-            var strokeLineColor = (0, _utils.rgba2hex)((0, _utils.rgb2rgba)((0, _utils.hex2rgb)(data._lineTint)));
-
+            var fillColor = Math.ceil(data.fillColor) * 256 + 255 * data.fillAlpha;
+            var strokeLineColor = Math.ceil(data.lineColor) * 256 + 255 * data.lineAlpha;
             var strokeLineWidth = data.lineWidth;
 
+            if (strokeLineWidth > 0 && strokeLineWidth < 1) {
+                strokeLineWidth = 1;
+            }
             var options = {
                 globalAlpha: data.fillAlpha * worldAlpha,
                 fillColor: fillColor,
@@ -30547,54 +30553,58 @@ var PXSceneGraphicsRenderer = function () {
             };
 
             if (data.type === _const.SHAPES.POLY) {
-                // Not support fill.
+                this.renderOptions = options;
+                if (!shape.closed) {
+                    this.renderLines(shape.points); // render line
+                } else {
+                    var points = shape.points;
+                    var holes = data.holes;
+                    var holeArray = [];
 
-                _this.renderOptions = options;
-                _this.renderPolygon(shape.points);
+                    for (var _i = 0; _i < holes.length; _i++) {
+                        var hole = holes[_i];
 
-                for (var j = 0; j < data.holes.length; j++) {
-                    _this.renderPolygon(data.holes[j].points);
+                        holeArray.push(points.length / 2);
+                        points = points.concat(hole.points);
+                    }
+                    var triangles = (0, _earcut2.default)(shape.points, holeArray, 2);
+                    var newPoints = [];
+
+                    for (var j = 0; j < triangles.length; j++) {
+                        var index = triangles[j];
+
+                        newPoints.push(points[index * 2]);
+                        newPoints.push(points[index * 2 + 1]);
+                    }
+                    this.renderPolygon(newPoints, false);
+                    this.renderPolygon(points.slice(0, points.length - 2), true);
+                    for (var _j = 0; _j < data.holes.length; _j++) {
+                        this.renderPolygon(data.holes[_j].points, true);
+                    }
                 }
-                _this.renderOptions = null;
+                this.renderOptions = null;
             } else if (data.type === _const.SHAPES.RECT) {
                 // Draw rect directly
-                _this.renderOptions = options;
-
-                _this.renderRect(shape);
-
-                _this.renderOptions = null;
+                this.renderOptions = options;
+                this.renderRect(shape);
+                this.renderOptions = null;
             } else if (data.type === _const.SHAPES.CIRC) {
-                // A trick way, use an image as a mask
-                // Not support outlines.
+                this.renderOptions = options;
+                var radius = shape.radius;
 
-                _this.renderOptions = options;
-
-                if (!_this.circleResource) {
-                    var circleResource = _this.renderer.view.create({
-                        t: 'imageResource',
-                        url: CIRCLE_IMAGE_PATH
-                    });
-
-                    circleResource.ready.then(function (resource) {
-                        _this.circleResource = resource;
-                        _this.renderCircle(shape);
-                    });
-                } else {
-                    _this.renderCircle(shape);
-                }
-
-                _this.renderOptions = null;
+                shape.width = radius * 2;
+                shape.height = radius * 2;
+                shape.circle = true;
+                this.renderRect(data.shape);
+                this.renderOptions = null;
             } else if (data.type === _const.SHAPES.ELIP) {
                 // TODO
                 // Not supported yet
             } else if (data.type === _const.SHAPES.RREC) {
-                // TODO
-                // Not supported yet
+                this.renderOptions = options;
+                this.renderRect(shape);
+                this.renderOptions = null;
             }
-        };
-
-        for (var i = 0; i < graphics.graphicsData.length; i++) {
-            _loop(i);
         }
 
         this.graphics = null;
@@ -30616,15 +30626,15 @@ var PXSceneGraphicsRenderer = function () {
         var tintB = (graphics.tint & 0xFF) / 255;
 
         for (var i = 0; i < graphics.graphicsData.length; ++i) {
-            var _data = graphics.graphicsData[i];
+            var data = graphics.graphicsData[i];
 
-            var fillColor = _data.fillColor | 0;
-            var lineColor = _data.lineColor | 0;
+            var fillColor = data.fillColor | 0;
+            var lineColor = data.lineColor | 0;
 
             // super inline cos im an optimization NAZI :)
-            _data._fillTint = ((fillColor >> 16 & 0xFF) / 255 * tintR * 255 << 16) + ((fillColor >> 8 & 0xFF) / 255 * tintG * 255 << 8) + (fillColor & 0xFF) / 255 * tintB * 255;
+            data._fillTint = ((fillColor >> 16 & 0xFF) / 255 * tintR * 255 << 16) + ((fillColor >> 8 & 0xFF) / 255 * tintG * 255 << 8) + (fillColor & 0xFF) / 255 * tintB * 255;
 
-            _data._lineTint = ((lineColor >> 16 & 0xFF) / 255 * tintR * 255 << 16) + ((lineColor >> 8 & 0xFF) / 255 * tintG * 255 << 8) + (lineColor & 0xFF) / 255 * tintB * 255;
+            data._lineTint = ((lineColor >> 16 & 0xFF) / 255 * tintR * 255 << 16) + ((lineColor >> 8 & 0xFF) / 255 * tintG * 255 << 8) + (lineColor & 0xFF) / 255 * tintB * 255;
         }
     };
 
@@ -30632,19 +30642,59 @@ var PXSceneGraphicsRenderer = function () {
      * Renders a polygon.
      *
      * @param {PIXI.Point[]} points - The points to render
-     * @param {boolean} close - Should the polygon be closed
-     * @param {CanvasRenderingContext2D} context - The rendering context to use
+     * @param {boolean} outLine is it a outline
+     *
      */
 
 
-    PXSceneGraphicsRenderer.prototype.renderPolygon = function renderPolygon(points) {
-        this.moveTo(points[0], points[1]);
+    PXSceneGraphicsRenderer.prototype.renderPolygon = function renderPolygon(points, outLine) {
+        var graphics = this.graphics;
 
-        for (var j = 1; j < points.length / 2; ++j) {
-            this.lineTo(points[j * 2], points[j * 2 + 1]);
+        if (!graphics || !graphics.renderedObject) {
+            return;
         }
+
+        var parentRenderedObject = graphics.renderedObject || this.renderer.context;
+        var renderOptions = this.renderOptions;
+        var polyon = this.renderer.view.create({
+            t: 'graphic',
+            parent: parentRenderedObject,
+            type: 'polygon',
+            fillColor: outLine ? 0x00000000 : renderOptions.fillColor,
+            points: points, // dont need the last point(same value with first)
+            lineColor: renderOptions.strokeLineColor,
+            lineWidth: outLine ? renderOptions.strokeLineWidth : 0
+        });
+
+        graphics.renderedObjects.push(polyon);
     };
 
+    /**
+     * render the lines
+     * @param {Array} points the lines points
+     */
+
+
+    PXSceneGraphicsRenderer.prototype.renderLines = function renderLines(points) {
+        var graphics = this.graphics;
+
+        if (!graphics || !graphics.renderedObject) {
+            return;
+        }
+        var parentRenderedObject = graphics.renderedObject || this.renderer.context;
+        var renderOptions = this.renderOptions;
+
+        var rect = this.renderer.view.create({
+            t: 'graphic',
+            type: 'lines',
+            points: points,
+            parent: parentRenderedObject,
+            lineColor: renderOptions.strokeLineColor,
+            lineWidth: renderOptions.strokeLineWidth
+        });
+
+        graphics.renderedObjects.push(rect);
+    };
     /**
      * Renders a rectangle.
      *
@@ -30659,153 +30709,21 @@ var PXSceneGraphicsRenderer = function () {
             return;
         }
         var parentRenderedObject = graphics.renderedObject || this.renderer.context;
-
+        var renderOptions = this.renderOptions;
         var rect = this.renderer.view.create({
             t: 'rect',
-            parent: parentRenderedObject
+            parent: parentRenderedObject,
+            fillColor: renderOptions.fillColor,
+            radius: shape.radius || 0,
+            x: shape.x - (shape.circle ? shape.radius : 0),
+            y: shape.y - (shape.circle ? shape.radius : 0),
+            w: shape.width,
+            h: shape.height,
+            lineColor: renderOptions.strokeLineColor,
+            lineWidth: renderOptions.strokeLineWidth
         });
-
-        var renderOptions = this.renderOptions;
-
-        rect.x = shape.x;
-        rect.y = shape.y;
-        rect.w = shape.width;
-        rect.h = shape.height;
-        rect.a = renderOptions.globalAlpha;
-        rect.fillColor = renderOptions.fillColor;
-        rect.lineColor = renderOptions.strokeLineColor;
-        rect.lineWidth = renderOptions.strokeLineWidth;
 
         graphics.renderedObjects.push(rect);
-    };
-
-    /**
-     * Renders a circle.
-     *
-     * @param {Object} shape - The shape data.
-     */
-
-
-    PXSceneGraphicsRenderer.prototype.renderCircle = function renderCircle(shape) {
-        var graphics = this.graphics;
-
-        if (!graphics || !graphics.renderedObject) {
-            return;
-        }
-        var parentRenderedObject = graphics.renderedObject || this.renderer.context;
-
-        var renderOptions = this.renderOptions;
-        var spriteWidth = this.circleResource.w;
-        var spriteHeight = this.circleResource.h;
-
-        var circleRadius = spriteWidth / 2;
-
-        var ratio = shape.radius / circleRadius;
-
-        var circle = this.renderer.view.create({
-            t: 'rect',
-            parent: parentRenderedObject,
-            clip: true,
-            fillColor: 0x0
-        });
-
-        circle.w = spriteWidth * ratio;
-        circle.h = spriteHeight * ratio;
-        circle.cx = circle.w * 0.5;
-        circle.cy = circle.w * 0.5;
-        circle.x = shape.x - circle.cx;
-        circle.y = shape.y - circle.cy;
-
-        var circleMaskImage = this.renderer.view.create({
-            t: 'image',
-            resource: this.circleResource,
-            parent: circle,
-            mask: true,
-            draw: false
-        });
-
-        var cx = spriteWidth * 0.5;
-        var cy = spriteHeight * 0.5;
-
-        circleMaskImage.x = -cx + circle.cx;
-        circleMaskImage.y = -cy + circle.cy;
-        circleMaskImage.cx = cx;
-        circleMaskImage.cy = cy;
-        circleMaskImage.sx = ratio;
-        circleMaskImage.sy = ratio;
-
-        var circleView = this.renderer.view.create({
-            t: 'rect',
-            parent: circle
-        });
-
-        cx *= ratio;
-        cy *= ratio;
-
-        circleView.x = 0;
-        circleView.y = 0;
-        circleView.w = circleRadius * 2 * ratio;
-        circleView.h = circleRadius * 2 * ratio;
-        circleView.cx = cx;
-        circleView.cy = cy;
-        circleView.fillColor = renderOptions.fillColor;
-        circleView.a = renderOptions.globalAlpha;
-
-        graphics.renderedObjects.push(circle);
-    };
-
-    /**
-     * Draw a single line
-     *
-     * @param {Object} startPoint - Start point of the line.
-     * @param {Object} endPoint - End point of the line
-     * @param {Object} options - extra options of the line
-     * @return {Object} The line, Render Target object in pxscene.
-     */
-
-
-    PXSceneGraphicsRenderer.prototype.drawLine = function drawLine(startPoint, endPoint, options) {
-        var graphics = this.graphics;
-
-        if (!graphics || !graphics.renderedObject) {
-            return null;
-        }
-        var parentRenderedObject = graphics.renderedObject || this.renderer.context;
-
-        var lineWidth = 2;
-        var color = 0xFFFFFFFF;
-        var alpha = 1;
-
-        if (options) {
-            lineWidth = options.strokeLineWidth;
-            color = options.strokeLineColor;
-            alpha = options.globalAlpha;
-        }
-
-        var line = this.renderer.view.create({
-            t: 'rect',
-            parent: parentRenderedObject
-        });
-
-        line.x = startPoint.x;
-        line.y = startPoint.y;
-
-        var xDiff = endPoint.x - startPoint.x;
-        var yDiff = endPoint.y - startPoint.y;
-
-        var width = Math.sqrt(xDiff * xDiff + yDiff * yDiff);
-
-        var rotation = Math.atan2(yDiff, xDiff);
-
-        var height = lineWidth;
-
-        line.w = width;
-        line.h = height;
-        line.fillColor = color;
-        line.r = rotation * 180 / Math.PI;
-        line.a = alpha;
-
-        return line;
     };
 
     /**
@@ -30816,7 +30734,6 @@ var PXSceneGraphicsRenderer = function () {
 
     PXSceneGraphicsRenderer.prototype.destroy = function destroy() {
         this.renderer = null;
-        this.circleResource = null;
         this.graphics = null;
     };
 
@@ -30828,7 +30745,7 @@ exports.default = PXSceneGraphicsRenderer;
 
 _PXSceneRenderer2.default.registerPlugin('graphicsV8', PXSceneGraphicsRenderer);
 
-},{"../../const":47,"../../renderers/pxscene/PXSceneRenderer":85,"../../utils":131}],59:[function(require,module,exports){
+},{"../../const":47,"../../renderers/pxscene/PXSceneRenderer":85,"earcut":3}],59:[function(require,module,exports){
 "use strict";
 
 exports.__esModule = true;
@@ -30853,7 +30770,7 @@ exports.default = bezierCurveTo;
 function bezierCurveTo(fromX, fromY, cpX, cpY, cpX2, cpY2, toX, toY) {
     var path = arguments.length > 8 && arguments[8] !== undefined ? arguments[8] : [];
 
-    var n = 20;
+    var n = 64;
     var dt = 0;
     var dt2 = 0;
     var dt3 = 0;
@@ -39821,18 +39738,6 @@ var Sprite = function (_Container) {
         this.shader = null;
     };
 
-    /**
-     * force the sprite recreate when render next time.
-     */
-
-
-    Sprite.prototype.forceCreate = function forceCreate() {
-        if (this.renderedObject) {
-            this.renderedObject.dispose();
-            this.renderedObject = null;
-        }
-    };
-
     // some helper functions..
 
     /**
@@ -39904,8 +39809,10 @@ var Sprite = function (_Container) {
                 return false;
             }
 
-            this._texture.orig.width = spriteWidth;
-            this._texture.orig.height = spriteHeight;
+            if (!this._texture.baseTexture.hasLoaded) {
+                this._texture.orig.width = spriteWidth;
+                this._texture.orig.height = spriteHeight;
+            }
 
             if (this.widthDirty) {
                 this._calcScaleFromWidth(this._width);
@@ -40596,7 +40503,14 @@ var PXSceneSpriteRenderer = function () {
             {
                 var maskRect = void 0;
 
-                if (texture.trim) {
+                if (texture.baseTexture.hasLoaded) {
+                    maskRect = {
+                        x: texture.orig.x,
+                        y: texture.orig.y,
+                        w: texture.orig.width,
+                        h: texture.orig.height
+                    };
+                } else if (texture.trim) {
                     maskRect = {
                         x: texture.frame.x,
                         y: texture.frame.y,
@@ -40629,11 +40543,25 @@ var PXSceneSpriteRenderer = function () {
                         draw: false
                     });
 
-                    sprite.renderedObjectSprite = this.renderer.view.create({
+                    var renderedObjectSpriteArgs = {
                         t: 'image',
                         parent: sprite.renderedObject,
                         url: texture.baseTexture.source.src
-                    });
+                    };
+
+                    if (texture._uvs) {
+                        var uvs = texture._uvs;
+
+                        renderedObjectSpriteArgs.uvs = [uvs.x2, uvs.y2, uvs.x3, uvs.y3, uvs.x1, uvs.y1, uvs.x0, uvs.y0];
+                    }
+
+                    if (texture.baseTexture.hasLoaded) {
+                        if (texture.trim) {
+                            renderedObjectSpriteArgs.w = texture.trim.width;
+                            renderedObjectSpriteArgs.h = texture.trim.height;
+                        }
+                    }
+                    sprite.renderedObjectSprite = this.renderer.view.create(renderedObjectSpriteArgs);
 
                     if (sprite.tint !== defaultTint) {
                         sprite.renderedObjectSpriteContainer = this.renderer.view.create({
@@ -40762,8 +40690,6 @@ var PXSceneSpriteRenderer = function () {
                     renderedObjectMaskContainer.h = this.renderer.height;
 
                     spriteMaskRenderedObject.mask = true;
-                    spriteMaskRenderedObject.a = 0.5;
-                    renderedObject.a = 1;
                 }
             } else {
                 var _renderedObjectMaskContainer = sprite.renderedObjectMaskContainer;
@@ -40832,23 +40758,6 @@ var PXSceneSpriteRenderer = function () {
             renderedObjectSprite.cx = attr.cx;
             renderedObjectSprite.cy = attr.cy;
 
-            if (texture.rotate) {
-                var rotateParam = this._getRotationParamByRotate(texture.rotate, sprite.spine);
-
-                if (rotateParam) {
-                    renderedObject.r = attr.r + rotateParam.r;
-                    if (!sprite.spine) {
-                        renderedObject.cx = spriteWidth * 0.5;
-                        renderedObject.cy = spriteHeight * 0.5;
-                        renderedObject.x = attr.x - attr.sx * renderedObject.cx;
-                        renderedObject.y = attr.y - attr.sy * renderedObject.cy;
-
-                        renderedObject.sx = attr.sx * rotateParam.sx;
-                        renderedObject.sy = attr.sy * rotateParam.sy;
-                    }
-                }
-            }
-
             if (sprite.tint !== defaultTint) {
                 renderedObjectSpriteContainer.x = 0;
                 renderedObjectSpriteContainer.y = 0;
@@ -40867,46 +40776,6 @@ var PXSceneSpriteRenderer = function () {
                 renderedObjectSprite.a = attr.a;
             }
         }
-    };
-
-    /**
-     * Calculate rotation param by rotate (from texture packer)
-     *
-     * @param {Number} rotation - Rotation (from texture packer)
-     * @param {Boolean} isSpine - Sprite is SpineSprite or not
-     * @returns {Object|null} Rotation param
-     * @private
-     */
-
-
-    PXSceneSpriteRenderer.prototype._getRotationParamByRotate = function _getRotationParamByRotate(rotation, isSpine) {
-        if (rotation % 2 !== 0) {
-            // Not supported yet, don't rotate
-            return null;
-        }
-
-        var flip = false;
-
-        if (rotation >= 8) {
-            rotation -= 8;
-            flip = true;
-        }
-
-        if (!isSpine) {
-            if (rotation === 2) {
-                rotation = 6;
-            } else if (rotation === 6) {
-                rotation = 2;
-            }
-        }
-
-        var degree = rotation * 45;
-
-        return {
-            r: degree,
-            sx: flip ? -1 : 1,
-            sy: 1
-        };
     };
 
     /**
@@ -40956,17 +40825,8 @@ var PXSceneSpriteRenderer = function () {
     return PXSceneSpriteRenderer;
 }();
 
-// Key: rotation method of texture packer
-// Value: rotation degree
-
-
 exports.default = PXSceneSpriteRenderer;
-PXSceneSpriteRenderer.rotationDegreeMap = {
-    0: 0,
-    2: 270,
-    4: 180,
-    6: 90
-};
+
 
 PXSceneSpriteRenderer.resourcesMap = {};
 
@@ -42172,13 +42032,6 @@ var defaultDestroyOptions = {
     baseTexture: true
 };
 
-// Map: font family name -> fontUrl
-// Set key lowercase
-var fontFamilyUrlMap = {
-    dejavusans: 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/fonts/DejaVuSans.ttf',
-    arial: 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/fonts/DejaVuSans.ttf'
-};
-
 /**
  * A Text Object will create a line or multiple lines of text. To split a line you can use '\n' in your text string,
  * or add a wordWrap property set to true and and wordWrapWidth property with a value in the style object.
@@ -42378,12 +42231,8 @@ var TextV8 = function (_Container) {
             var fontFamily = fontFamilies[i].trim();
 
             fontFamilies[i] = fontFamily;
-
-            // Create font resource
-            var fontFamilyKey = TextV8._getFontFamilyKey(fontFamily);
-
-            if (renderer && !TextV8.fontResourceCache[fontFamilyKey]) {
-                var fontUrl = fontFamilyUrlMap[fontFamilyKey];
+            if (renderer && !TextV8.fontResourceCache[fontFamily]) {
+                var fontUrl = fontFamily;
 
                 if (fontUrl) {
                     var fontRes = renderer.view.create({
@@ -42392,7 +42241,7 @@ var TextV8 = function (_Container) {
                     });
 
                     fontRes.ready.then(function (font) {
-                        TextV8.fontResourceCache[fontFamilyKey] = font;
+                        TextV8.fontResourceCache[fontFamily] = font;
                     });
                 }
             }
@@ -42411,18 +42260,6 @@ var TextV8 = function (_Container) {
     };
 
     /**
-     * Get font family key in the map
-     * @param {String} fontFamily - font family name
-     * @returns {String} Font family key.
-     * @private
-     */
-
-
-    TextV8._getFontFamilyKey = function _getFontFamilyKey(fontFamily) {
-        return fontFamily.toLowerCase();
-    };
-
-    /**
      * Get font resource by Font family.
      * @param {String} fontFamily - Font family name
      * @returns {Object} FontResource
@@ -42430,9 +42267,7 @@ var TextV8 = function (_Container) {
 
 
     TextV8.getFontResourceByFamily = function getFontResourceByFamily(fontFamily) {
-        var fontFamilyKey = this._getFontFamilyKey(fontFamily);
-
-        return TextV8.fontResourceCache[fontFamilyKey];
+        return TextV8.fontResourceCache[fontFamily];
     };
 
     /**
@@ -43487,7 +43322,7 @@ var PXSceneTextRenderer = function () {
         var fontResource = void 0;
 
         for (var i = 0; i < font.fontFamilies.length; ++i) {
-            fontResource = text.fontResourceCache[font.fontFamilies[i].toLowerCase()];
+            fontResource = text.fontResourceCache[font.fontFamilies[i]];
             if (fontResource) {
                 break;
             }
@@ -43510,6 +43345,9 @@ var PXSceneTextRenderer = function () {
 
             var attr = this._calcTextAttributes(globalPoint, text, textMeasure);
 
+            if (text.renderedObjectText.text.trim() !== text.text.trim()) {
+                text.renderedObjectText.text = text.text;
+            }
             renderedObject.x = attr.x;
             renderedObject.y = attr.y;
             renderedObject.cx = attr.cx;
@@ -43541,6 +43379,8 @@ var PXSceneTextRenderer = function () {
             var createTextStyle = {
                 t: 'textBox',
                 text: text.text,
+                bold: font.fontWeight === 'bold',
+                italic: font.fontStyle === 'italic',
                 wordWrap: !!style.wordWrap,
                 w: !!style.wordWrap && style.wordWrapWidth || 0,
                 pixelSize: font.fontSize,
@@ -43548,21 +43388,35 @@ var PXSceneTextRenderer = function () {
                 parent: text.renderedObject
             };
 
-            if (style.dropShadow) {
+            if (style.dropShadow && style.dropShadowDistance > 0) {
                 var shadowOffset = this._calcShadowOffset(style.dropShadowAngle, style.dropShadowDistance);
 
-                // Create shadow first.
-                createTextStyle.textColor = (0, _utils.string2hexV8)(style.dropShadowColor);
-                createTextStyle.x = shadowOffset.xOffset;
-                createTextStyle.y = shadowOffset.yOffset;
-                text.renderedObjectTextShadow = this.renderer.view.create(createTextStyle);
+                createTextStyle.dropShadowColor = (0, _utils.string2hexV8)(style.dropShadowColor);
+                createTextStyle.dropShadow = true;
+                createTextStyle.dropShadowOffsetX = shadowOffset.xOffset;
+                createTextStyle.dropShadowOffsetY = shadowOffset.yOffset;
+                createTextStyle.dropShadowBlur = style.dropShadowBlur;
             }
 
             var textColor = Array.isArray(style.fill) ? style.fill[0] : style.fill;
+            var gradientColor = null;
+
+            if (Array.isArray(style.fill)) {
+                gradientColor = style.fill[1];
+            }
+            //
 
             createTextStyle.textColor = (0, _utils.string2hexV8)(textColor);
+            if (gradientColor) {
+                createTextStyle.gradientColor = (0, _utils.string2hexV8)(gradientColor);
+            }
+            if (style.strokeThickness && style.strokeThickness > 0) {
+                createTextStyle.strokeWidth = style.strokeThickness;
+                createTextStyle.strokeColor = (0, _utils.string2hexV8)(style.stroke);
+            }
             createTextStyle.x = 0;
             createTextStyle.y = 0;
+
             text.renderedObjectText = this.renderer.view.create(createTextStyle);
 
             text.renderedObject.w = textMeasure.w;
@@ -49040,6 +48894,11 @@ var TilingSprite = function (_core$Sprite) {
 
         this.tileTransform = null;
         this.uvTransform = null;
+
+        if (this.renderParent) {
+            this.renderParent.remove();
+            this.tiles = null;
+        }
     };
 
     /**
@@ -49778,21 +49637,15 @@ var PXSceneTilingSpriteRenderer = function () {
         var _this = this;
 
         var texture = sprite._texture;
-
+        var parentRenderedObject = sprite.parent && sprite.parent.renderedObject || this.renderer.context;
         // Convert local coordinates to world coordinates
         var point = new _math.Point(sprite.x, sprite.y);
         var globalPoint = sprite.parent.toGlobal(point);
-        var spriteWidth = 0;
-        var spriteHeight = 0;
 
         // Calculate all attributes
-        if (sprite.imgResource && sprite.renderedObject) {
-            var renderedObject = sprite.renderedObject;
-
-            spriteWidth = renderedObject.resource.w;
-            spriteHeight = renderedObject.resource.h;
-
-            var attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
+        if (sprite.imgResource && sprite.tiles && sprite.tiles.length > 0 && sprite.renderParent) {
+            var attr = this._calcSpriteAttributes(globalPoint, sprite.width, sprite.height, sprite);
+            var renderedObject = sprite.renderParent;
 
             renderedObject.x = attr.x;
             renderedObject.y = attr.y;
@@ -49802,6 +49655,32 @@ var PXSceneTilingSpriteRenderer = function () {
             renderedObject.r = attr.r;
             renderedObject.sx = attr.sx;
             renderedObject.sy = attr.sy;
+            var tp = this._getTilePropeties(sprite, texture);
+
+            sprite.tiles.forEach(function (tr) {
+                return tr.a = 0;
+            });
+            for (var i = 0; i < tp.x; i++) {
+                for (var j = 0; j < tp.y; j++) {
+                    var index = i * tp.y + j;
+                    var tileRenderObject = sprite.tiles[index];
+
+                    if (!tileRenderObject) {
+                        // if didn't create before , create it
+                        tileRenderObject = this.renderer.view.create({
+                            t: 'image',
+                            parent: sprite.renderParent,
+                            resource: sprite.imgResource
+                        });
+                        sprite.tiles.push(tileRenderObject);
+                    }
+                    tileRenderObject.x = tp.tw * i + tp.offsetX;
+                    tileRenderObject.y = tp.th * j + tp.offsetY;
+                    tileRenderObject.sx = tp.tileScaleX;
+                    tileRenderObject.sy = tp.tileScaleY;
+                    tileRenderObject.a = 1;
+                }
+            }
         } else if (!sprite.imgResource) {
             sprite.imgResource = this.renderer.view.create({
                 t: 'imageResource',
@@ -49809,33 +49688,66 @@ var PXSceneTilingSpriteRenderer = function () {
             });
 
             sprite.imgResource.ready.then(function (imgResource) {
-                var width = _this.renderer.context.w;
-                var height = _this.renderer.context.h;
-                var attr = _this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
-
-                var parent = sprite.parent.renderedObject || _this.renderer.context;
-
-                sprite.renderedObject = _this.renderer.view.create({
-                    t: 'image',
-                    parent: parent,
-                    x: attr.x,
-                    y: attr.y,
-                    cx: attr.cx,
-                    cy: attr.cy,
-                    a: attr.a,
-                    r: attr.r,
-                    sx: attr.sx,
-                    sy: attr.sy,
-                    stretchX: 2,
-                    stretchY: 2,
-                    w: width * 20, // spriteWidth,
-                    h: height * 20, // spriteHeight,
-                    resource: imgResource
+                texture.trim = { x: 0, y: 0, width: imgResource.w, height: imgResource.h, type: 1 };
+                texture.orig = texture.trim;
+                sprite.renderParent = _this.renderer.view.create({
+                    t: 'rect',
+                    parent: parentRenderedObject,
+                    w: sprite.width,
+                    h: sprite.height,
+                    fillColor: 0xff000033
                 });
+
+                sprite.tiles = []; // cache tile
+                var tp = _this._getTilePropeties(sprite, texture);
+
+                for (var _i = 0; _i < tp.x; _i++) {
+                    for (var _j = 0; _j < tp.y; _j++) {
+                        var _tileRenderObject = _this.renderer.view.create({
+                            t: 'image',
+                            parent: sprite.renderParent,
+                            x: tp.tw * _i + tp.offsetX,
+                            y: tp.th * _j + tp.offsetY,
+                            sx: tp.tileScaleX,
+                            sy: tp.tileScaleY,
+                            resource: imgResource
+                        });
+
+                        sprite.tiles.push(_tileRenderObject);
+                    }
+                }
             });
         }
     };
 
+    /**
+     * get the tile properties
+     *
+     * @param {PIXI.Sprite} ts the tile sprite
+     * @param {PIXI.Texure} texture the tile sprite texture
+     * @returns {Object} the tile properties
+     * @private
+     */
+
+
+    PXSceneTilingSpriteRenderer.prototype._getTilePropeties = function _getTilePropeties(ts, texture) {
+        var tileScaleX = ts.tileScale.x; // tile scale x
+        var tileScaleY = ts.tileScale.y; // tile scale y
+
+        var w = ts.width; // ts width
+        var h = ts.height; // ts height
+
+        var tw = texture.trim.width * tileScaleX; // ts tile width
+        var th = texture.trim.height * tileScaleY; // ts tile height
+
+        var offsetX = (ts.tilePosition.x % tw - tw) % tw;
+        var offsetY = (ts.tilePosition.y % th - th) % th;
+
+        var x = Math.ceil((w - offsetX) / (texture.trim.width * tileScaleX)); // tile row number
+        var y = Math.ceil((h - offsetY) / (texture.trim.height * tileScaleY)); // tile clounm number
+
+        return { tileScaleX: tileScaleX, tileScaleY: tileScaleY, w: w, h: h, tw: tw, th: th, offsetX: offsetX, offsetY: offsetY, x: x, y: y };
+    };
     /**
      * Calculate sprite attribute.
      *
@@ -49849,34 +49761,14 @@ var PXSceneTilingSpriteRenderer = function () {
 
 
     PXSceneTilingSpriteRenderer.prototype._calcSpriteAttributes = function _calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite) {
-        var width = this.renderer.context.w;
-        var height = this.renderer.context.h;
-
-        var imgWidth = sprite.imgResource.w;
-        var imgHeight = sprite.imgResource.h;
-
-        var numTileW = Math.ceil(width / imgWidth);
-        var numTileH = Math.ceil(height / imgHeight);
-
-        var modX = sprite.tilePosition.x % (numTileW * imgWidth);
-        var modY = sprite.tilePosition.y % (numTileH * imgHeight);
-
         var cx = spriteWidth * sprite.anchor.x;
         var cy = spriteHeight * sprite.anchor.y;
-        var x = globalPoint.x - spriteWidth * sprite.anchor.x - numTileW * imgWidth * 3 + modX * sprite.tileScale.x;
-        var y = globalPoint.y - spriteHeight * sprite.anchor.y - numTileH * imgHeight * 3 + modY * sprite.tileScale.y;
-
-        var a = imgWidth > 0 ? 1 : 0;
-        var worldTransform = {
-            skew: {},
-            scale: {},
-            position: {}
-        };
-
-        sprite.transform.worldTransform.decompose(worldTransform);
-        var r = worldTransform.rotation * (180 / Math.PI);
-        var sx = sprite.tileScale.x;
-        var sy = sprite.tileScale.y;
+        var x = globalPoint.x - cx;
+        var y = globalPoint.y - cy;
+        var a = sprite.alpha;
+        var r = sprite.rotation * (180 / Math.PI);
+        var sx = sprite.scale.x;
+        var sy = sprite.scale.y;
 
         return {
             x: x,

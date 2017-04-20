@@ -1,62 +1,5 @@
-From 53f8810b623cdd108fb02c399f1fe3cedc16acea Mon Sep 17 00:00:00 2001
-From: cqy <chqy24@gmail.com>
-Date: Tue, 14 Mar 2017 10:24:47 +0800
-Subject: [PATCH] pxscene support
-
----
- src/core/autoDetectRenderer.js                     |    8 +-
- src/core/const.js                                  |    2 +
- src/core/display/Container.js                      |  185 +++-
- src/core/display/DisplayObject.js                  |   31 +-
- src/core/graphics/GraphicsV8.js                    | 1040 ++++++++++++++++++++
- .../graphics/pxscene/PXSceneGraphicsRenderer.js    |  400 ++++++++
- src/core/index.js                                  |    7 +-
- src/core/renderers/pxscene/PXSceneRenderer.js      |  265 +++++
- .../renderers/pxscene/utils/PXSceneRenderTarget.js |   82 ++
- src/core/sprites/Sprite.js                         |  219 ++++-
- src/core/sprites/pxscene/PXSceneSpriteRenderer.js  |  465 +++++++++
- src/core/text/Text.js                              |  915 +----------------
- src/core/text/TextV8.js                            |  386 ++++++++
- src/core/text/TextWeb.js                           |  915 +++++++++++++++++
- src/core/text/pxscene/PXSceneTextRenderer.js       |  191 ++++
- src/core/textures/BaseRenderTexture.js             |    8 +
- src/core/textures/BaseTexture.js                   |    8 +-
- src/core/textures/Texture.js                       |    4 +-
- src/core/ticker/Ticker.js                          |   86 +-
- src/core/utils/canUploadSameBuffer.js              |    2 +-
- src/core/utils/index.js                            |  114 ++-
- src/extras/cacheAsBitmap.js                        |   73 +-
- src/extras/index.js                                |    1 +
- src/extras/pxscene/PXSceneTilingSpriteRenderer.js  |  157 +++
- src/interaction/InteractionManager.js              |  260 +++--
- src/loaders/{ => browser}/bitmapFontParser.js      |    4 +-
- src/loaders/{ => browser}/loader.js                |    4 +-
- src/loaders/index.js                               |   46 +-
- src/loaders/pxscene/loader.js                      |  661 +++++++++++++
- src/loaders/pxscene/resource.js                    |  748 ++++++++++++++
- src/loaders/{ => utils}/spritesheetParser.js       |   15 +-
- src/loaders/{ => utils}/textureParser.js           |   16 +-
- src/particles/ParticleContainer.js                 |  109 ++
- src/polyfill/index.js                              |   34 +-
- 34 files changed, 6392 insertions(+), 1069 deletions(-)
- create mode 100644 src/core/graphics/GraphicsV8.js
- create mode 100644 src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
- create mode 100644 src/core/renderers/pxscene/PXSceneRenderer.js
- create mode 100644 src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
- create mode 100644 src/core/sprites/pxscene/PXSceneSpriteRenderer.js
- create mode 100644 src/core/text/TextV8.js
- create mode 100644 src/core/text/TextWeb.js
- create mode 100644 src/core/text/pxscene/PXSceneTextRenderer.js
- create mode 100644 src/extras/pxscene/PXSceneTilingSpriteRenderer.js
- rename src/loaders/{ => browser}/bitmapFontParser.js (97%)
- rename src/loaders/{ => browser}/loader.js (95%)
- create mode 100644 src/loaders/pxscene/loader.js
- create mode 100644 src/loaders/pxscene/resource.js
- rename src/loaders/{ => utils}/spritesheetParser.js (84%)
- rename src/loaders/{ => utils}/textureParser.js (57%)
-
 diff --git a/src/core/autoDetectRenderer.js b/src/core/autoDetectRenderer.js
-index 8960425..d8b03a5 100644
+index 8960425..d44e19d 100644
 --- a/src/core/autoDetectRenderer.js
 +++ b/src/core/autoDetectRenderer.js
 @@ -1,6 +1,7 @@
@@ -67,7 +10,7 @@ index 8960425..d8b03a5 100644
  
  /**
   * This helper function will automatically detect which renderer you should be using.
-@@ -19,10 +20,15 @@ import WebGLRenderer from './renderers/webgl/WebGLRenderer';
+@@ -19,10 +20,19 @@ import WebGLRenderer from './renderers/webgl/WebGLRenderer';
   *      need to call toDataUrl on the webgl context
   * @param {number} [options.resolution=1] - The resolution / device pixel ratio of the renderer, retina would be 2
   * @param {boolean} [noWebGL=false] - prevents selection of WebGL renderer, even if such is present
@@ -78,6 +21,10 @@ index 8960425..d8b03a5 100644
  {
 +    if (utils.isV8())
 +    {
++        const PXSceneHelper = require('./utils/PXSceneHelper').default; // eslint-disable-line global-require
++
++        PXSceneHelper.getInstance().injectPxScene(options.view);
++
 +        return new PXSceneRenderer(width, height, options);
 +    }
 +
@@ -103,17 +50,10 @@ index f9235e4..4d29a35 100644
  
  /**
 diff --git a/src/core/display/Container.js b/src/core/display/Container.js
-index ed8cd5f..f56f9ff 100644
+index ed8cd5f..b25ac64 100644
 --- a/src/core/display/Container.js
 +++ b/src/core/display/Container.js
-@@ -1,5 +1,6 @@
- import { removeItems } from '../utils';
- import DisplayObject from './DisplayObject';
-+import { BLEND_MODES } from '../const';
- 
- /**
-  * A Container represents a collection of display objects.
-@@ -317,10 +318,10 @@ export default class Container extends DisplayObject
+@@ -317,10 +317,10 @@ export default class Container extends DisplayObject
      {
          this._boundsID++;
  
@@ -128,7 +68,7 @@ index ed8cd5f..f56f9ff 100644
  
          for (let i = 0, j = this.children.length; i < j; ++i)
          {
-@@ -500,6 +501,127 @@ export default class Container extends DisplayObject
+@@ -500,6 +500,122 @@ export default class Container extends DisplayObject
      }
  
      /**
@@ -222,11 +162,6 @@ index ed8cd5f..f56f9ff 100644
 +            }
 +        }
 +
-+        if (this.blendMode === BLEND_MODES.ADD)
-+        {
-+            this.renderedObject.a = 0.5;
-+        }
-+
 +        function innerRenderMask(maskRenderedObject)
 +        {
 +            if (!this.renderedObjectMaskContainer)
@@ -256,7 +191,7 @@ index ed8cd5f..f56f9ff 100644
       * Renders the object using the Canvas renderer
       *
       * @param {PIXI.CanvasRenderer} renderer - The renderer
-@@ -530,6 +652,26 @@ export default class Container extends DisplayObject
+@@ -530,6 +646,26 @@ export default class Container extends DisplayObject
      }
  
      /**
@@ -283,7 +218,7 @@ index ed8cd5f..f56f9ff 100644
       * Removes all internal references and listeners as well as removes children from the display list.
       * Do not use a Container after calling `destroy`.
       *
-@@ -546,6 +688,23 @@ export default class Container extends DisplayObject
+@@ -546,6 +682,23 @@ export default class Container extends DisplayObject
      {
          super.destroy();
  
@@ -307,7 +242,7 @@ index ed8cd5f..f56f9ff 100644
          const destroyChildren = typeof options === 'boolean' ? options : options && options.children;
  
          const oldChildren = this.removeChildren(0, this.children.length);
-@@ -566,7 +725,14 @@ export default class Container extends DisplayObject
+@@ -566,7 +719,14 @@ export default class Container extends DisplayObject
       */
      get width()
      {
@@ -323,7 +258,7 @@ index ed8cd5f..f56f9ff 100644
      }
  
      set width(value) // eslint-disable-line require-jsdoc
-@@ -592,7 +758,14 @@ export default class Container extends DisplayObject
+@@ -592,7 +752,14 @@ export default class Container extends DisplayObject
       */
      get height()
      {
@@ -340,7 +275,7 @@ index ed8cd5f..f56f9ff 100644
  
      set height(value) // eslint-disable-line require-jsdoc
 diff --git a/src/core/display/DisplayObject.js b/src/core/display/DisplayObject.js
-index 4e6c77d..3facb44 100644
+index 4e6c77d..41f69ac 100644
 --- a/src/core/display/DisplayObject.js
 +++ b/src/core/display/DisplayObject.js
 @@ -5,6 +5,7 @@ import TransformStatic from './TransformStatic';
@@ -351,15 +286,7 @@ index 4e6c77d..3facb44 100644
  // _tempDisplayObjectParent = new DisplayObject();
  
  /**
-@@ -36,6 +37,7 @@ export default class DisplayObject extends EventEmitter
-          *
-          * @member {PIXI.TransformBase}
-          */
-+
-         this.transform = new TransformClass();
- 
-         /**
-@@ -331,6 +333,16 @@ export default class DisplayObject extends EventEmitter
+@@ -331,6 +332,16 @@ export default class DisplayObject extends EventEmitter
      }
  
      /**
@@ -376,7 +303,7 @@ index 4e6c77d..3facb44 100644
       * Set the parent Container of this DisplayObject
       *
       * @param {PIXI.Container} container - The Container to add this DisplayObject to
-@@ -578,16 +590,23 @@ export default class DisplayObject extends EventEmitter
+@@ -578,16 +589,23 @@ export default class DisplayObject extends EventEmitter
  
      set mask(value) // eslint-disable-line require-jsdoc
      {
@@ -1454,18 +1381,13 @@ index 0000000..b409c29
 +GraphicsV8._SPRITE_TEXTURE = null;
 diff --git a/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
 new file mode 100644
-index 0000000..52cb072
+index 0000000..f5ecd04
 --- /dev/null
 +++ b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
-@@ -0,0 +1,400 @@
+@@ -0,0 +1,314 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import { SHAPES } from '../../const';
-+import { hex2rgb, rgb2rgba, rgba2hex } from '../../utils';
-+
-+// Map: font family name -> fontUrl
-+// Set key lowercase
-+const CIRCLE_IMAGE_PATH = 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/circle-mask.png';
-+
++import earcut from 'earcut';
 +/**
 + * Renderer dedicated to drawing and batching graphics objects.
 + *
@@ -1487,8 +1409,6 @@ index 0000000..52cb072
 +        this.renderOptions = null;
 +
 +        this.graphics = null;
-+
-+        this.circleResource = null;
 +    }
 +
 +    /**
@@ -1552,11 +1472,14 @@ index 0000000..52cb072
 +            const data = graphics.graphicsData[i];
 +            const shape = data.shape;
 +
-+            const fillColor = rgba2hex(rgb2rgba(hex2rgb(data._fillTint)));
-+            const strokeLineColor = rgba2hex(rgb2rgba(hex2rgb(data._lineTint)));
++            const fillColor = (Math.ceil(data.fillColor) * 256) + (255 * data.fillAlpha);
++            const strokeLineColor = (Math.ceil(data.lineColor) * 256) + (255 * data.lineAlpha);
++            let strokeLineWidth = data.lineWidth;
 +
-+            const strokeLineWidth = data.lineWidth;
-+
++            if (strokeLineWidth > 0 && strokeLineWidth < 1) // the minimal line width is 1
++            {
++                strokeLineWidth = 1;
++            }
 +            const options = {
 +                globalAlpha: data.fillAlpha * worldAlpha,
 +                fillColor,
@@ -1566,14 +1489,45 @@ index 0000000..52cb072
 +
 +            if (data.type === SHAPES.POLY)
 +            {
-+                // Not support fill.
-+
 +                this.renderOptions = options;
-+                this.renderPolygon(shape.points);
-+
-+                for (let j = 0; j < data.holes.length; j++)
++                if (!shape.closed)
 +                {
-+                    this.renderPolygon(data.holes[j].points);
++                    this.renderLines(shape.points); // render line
++                }
++                else
++                {
++                    let points = shape.points;
++                    const holes = data.holes;
++                    const holeArray = [];
++
++                    for (let i = 0; i < holes.length; i++)
++                    {
++                        const hole = holes[i];
++
++                        holeArray.push(points.length / 2);
++                        points = points.concat(hole.points);
++                    }
++
++                    const triangles = earcut(shape.points, holeArray, 2);
++                    const newPoints = [];
++
++                    for (let j = 0; j < triangles.length; j++)
++                    {
++                        const index = triangles[j];
++
++                        newPoints.push(points[index * 2]);
++                        newPoints.push(points[(index * 2) + 1]);
++                    }
++
++                    this.renderPolygon(newPoints, false); // render the inner solid polygon
++                    this.renderPolygon(points.slice(0, points.length - 2), true); // render the polygon outline
++
++                    for (let j = 0; j < data.holes.length; j++)
++                    {
++                        const hole = holes[j];
++
++                        this.renderPolygon(hole.points, true); // if got holes, render the holes outline
++                    }
 +                }
 +                this.renderOptions = null;
 +            }
@@ -1581,36 +1535,17 @@ index 0000000..52cb072
 +            {
 +                // Draw rect directly
 +                this.renderOptions = options;
-+
 +                this.renderRect(shape);
-+
 +                this.renderOptions = null;
 +            }
 +            else if (data.type === SHAPES.CIRC)
 +            {
-+                // A trick way, use an image as a mask
-+                // Not support outlines.
-+
 +                this.renderOptions = options;
++                const radius = shape.radius;
 +
-+                if (!this.circleResource)
-+                {
-+                    const circleResource = this.renderer.view.create({
-+                        t: 'imageResource',
-+                        url: CIRCLE_IMAGE_PATH,
-+                    });
-+
-+                    circleResource.ready.then((resource) =>
-+                    {
-+                        this.circleResource = resource;
-+                        this.renderCircle(shape);
-+                    });
-+                }
-+                else
-+                {
-+                    this.renderCircle(shape);
-+                }
-+
++                shape.width = shape.height = radius * 2;
++                shape.circle = true;
++                this.renderRect(shape);
 +                this.renderOptions = null;
 +            }
 +            else if (data.type === SHAPES.ELIP)
@@ -1620,8 +1555,9 @@ index 0000000..52cb072
 +            }
 +            else if (data.type === SHAPES.RREC)
 +            {
-+                // TODO
-+                // Not supported yet
++                this.renderOptions = options;
++                this.renderRect(shape);
++                this.renderOptions = null;
 +            }
 +        }
 +
@@ -1668,19 +1604,59 @@ index 0000000..52cb072
 +     * Renders a polygon.
 +     *
 +     * @param {PIXI.Point[]} points - The points to render
-+     * @param {boolean} close - Should the polygon be closed
-+     * @param {CanvasRenderingContext2D} context - The rendering context to use
++     * @param {boolean} outLine whether to draw outline
++     *
 +     */
-+    renderPolygon(points)
++    renderPolygon(points, outLine)
 +    {
-+        this.moveTo(points[0], points[1]);
++        const graphics = this.graphics;
 +
-+        for (let j = 1; j < points.length / 2; ++j)
++        if (!graphics || !graphics.renderedObject)
 +        {
-+            this.lineTo(points[j * 2], points[(j * 2) + 1]);
++            return;
 +        }
++
++        const parentRenderedObject = graphics.renderedObject || this.renderer.context;
++        const renderOptions = this.renderOptions;
++        const polyon = this.renderer.view.create({
++            t: 'graphic',
++            parent: parentRenderedObject,
++            type: 'polygon',
++            fillColor: outLine ? 0x00 : renderOptions.fillColor,
++            points, // dont need the last point(same value with first)
++            lineColor: renderOptions.strokeLineColor,
++            lineWidth: outLine ? renderOptions.strokeLineWidth : 0,
++        });
++
++        graphics.renderedObjects.push(polyon);
 +    }
 +
++   /**
++    * render the lines
++    * @param {Array} points the lines points
++    */
++    renderLines(points)
++    {
++        const graphics = this.graphics;
++
++        if (!graphics || !graphics.renderedObject)
++        {
++            return;
++        }
++        const parentRenderedObject = graphics.renderedObject || this.renderer.context;
++        const renderOptions = this.renderOptions;
++
++        const rect = this.renderer.view.create({
++            t: 'graphic',
++            type: 'lines',
++            points,
++            parent: parentRenderedObject,
++            lineColor: renderOptions.strokeLineColor,
++            lineWidth: renderOptions.strokeLineWidth,
++        });
++
++        graphics.renderedObjects.push(rect);
++    }
 +    /**
 +     * Renders a rectangle.
 +     *
@@ -1695,169 +1671,47 @@ index 0000000..52cb072
 +            return;
 +        }
 +        const parentRenderedObject = graphics.renderedObject || this.renderer.context;
-+
++        const renderOptions = this.renderOptions;
 +        const rect = this.renderer.view.create({
 +            t: 'rect',
 +            parent: parentRenderedObject,
++            fillColor: renderOptions.fillColor,
++            radius: shape.radius || 0,
++            x: shape.x - (shape.circle ? shape.radius : 0),
++            y: shape.y - (shape.circle ? shape.radius : 0),
++            w: shape.width,
++            h: shape.height,
++            lineColor: renderOptions.strokeLineColor,
++            lineWidth: renderOptions.strokeLineWidth,
 +        });
-+
-+        const renderOptions = this.renderOptions;
-+
-+        rect.x = shape.x;
-+        rect.y = shape.y;
-+        rect.w = shape.width;
-+        rect.h = shape.height;
-+        rect.a = renderOptions.globalAlpha;
-+        rect.fillColor = renderOptions.fillColor;
-+        rect.lineColor = renderOptions.strokeLineColor;
-+        rect.lineWidth = renderOptions.strokeLineWidth;
 +
 +        graphics.renderedObjects.push(rect);
 +    }
 +
 +    /**
-+     * Renders a circle.
-+     *
-+     * @param {Object} shape - The shape data.
-+     */
-+    renderCircle(shape)
-+    {
-+        const graphics = this.graphics;
-+
-+        if (!graphics || !graphics.renderedObject)
-+        {
-+            return;
-+        }
-+        const parentRenderedObject = graphics.renderedObject || this.renderer.context;
-+
-+        const renderOptions = this.renderOptions;
-+        const spriteWidth = this.circleResource.w;
-+        const spriteHeight = this.circleResource.h;
-+
-+        const circleRadius = spriteWidth / 2;
-+
-+        const ratio = shape.radius / circleRadius;
-+
-+        const circle = this.renderer.view.create({
-+            t: 'rect',
-+            parent: parentRenderedObject,
-+            clip: true,
-+            fillColor: 0x0,
-+        });
-+
-+        circle.w = spriteWidth * ratio;
-+        circle.h = spriteHeight * ratio;
-+        circle.cx = circle.w * 0.5;
-+        circle.cy = circle.w * 0.5;
-+        circle.x = shape.x - circle.cx;
-+        circle.y = shape.y - circle.cy;
-+
-+        const circleMaskImage = this.renderer.view.create({
-+            t: 'image',
-+            resource: this.circleResource,
-+            parent: circle,
-+            mask: true,
-+            draw: false,
-+        });
-+
-+        let cx = spriteWidth * 0.5;
-+        let cy = spriteHeight * 0.5;
-+
-+        circleMaskImage.x = -cx + circle.cx;
-+        circleMaskImage.y = -cy + circle.cy;
-+        circleMaskImage.cx = cx;
-+        circleMaskImage.cy = cy;
-+        circleMaskImage.sx = ratio;
-+        circleMaskImage.sy = ratio;
-+
-+        const circleView = this.renderer.view.create({
-+            t: 'rect',
-+            parent: circle,
-+        });
-+
-+        cx *= ratio;
-+        cy *= ratio;
-+
-+        circleView.x = 0;
-+        circleView.y = 0;
-+        circleView.w = circleRadius * 2 * ratio;
-+        circleView.h = circleRadius * 2 * ratio;
-+        circleView.cx = cx;
-+        circleView.cy = cy;
-+        circleView.fillColor = renderOptions.fillColor;
-+        circleView.a = renderOptions.globalAlpha;
-+
-+        graphics.renderedObjects.push(circle);
-+    }
-+
-+    /**
-+     * Draw a single line
-+     *
-+     * @param {Object} startPoint - Start point of the line.
-+     * @param {Object} endPoint - End point of the line
-+     * @param {Object} options - extra options of the line
-+     * @return {Object} The line, Render Target object in pxscene.
-+     */
-+    drawLine(startPoint, endPoint, options)
-+    {
-+        const graphics = this.graphics;
-+
-+        if (!graphics || !graphics.renderedObject)
-+        {
-+            return null;
-+        }
-+        const parentRenderedObject = graphics.renderedObject || this.renderer.context;
-+
-+        let lineWidth = 2;
-+        let color = 0xFFFFFFFF;
-+        let alpha = 1;
-+
-+        if (options)
-+        {
-+            lineWidth = options.strokeLineWidth;
-+            color = options.strokeLineColor;
-+            alpha = options.globalAlpha;
-+        }
-+
-+        const line = this.renderer.view.create({
-+            t: 'rect',
-+            parent: parentRenderedObject,
-+        });
-+
-+        line.x = startPoint.x;
-+        line.y = startPoint.y;
-+
-+        const xDiff = endPoint.x - startPoint.x;
-+        const yDiff = endPoint.y - startPoint.y;
-+
-+        const width = Math.sqrt((xDiff * xDiff) + (yDiff * yDiff));
-+
-+        const rotation = Math.atan2(yDiff, xDiff);
-+
-+        const height = lineWidth;
-+
-+        line.w = width;
-+        line.h = height;
-+        line.fillColor = color;
-+        line.r = rotation * 180 / Math.PI;
-+        line.a = alpha;
-+
-+        return line;
-+    }
-+
-+    /**
 +     * destroy graphics object
-+     *
 +     */
 +    destroy()
 +    {
 +        this.renderer = null;
-+        this.circleResource = null;
 +        this.graphics = null;
 +    }
 +}
 +
 +PXSceneRenderer.registerPlugin('graphicsV8', PXSceneGraphicsRenderer);
+diff --git a/src/core/graphics/utils/bezierCurveTo.js b/src/core/graphics/utils/bezierCurveTo.js
+index fe73567..d3a1851 100644
+--- a/src/core/graphics/utils/bezierCurveTo.js
++++ b/src/core/graphics/utils/bezierCurveTo.js
+@@ -17,7 +17,7 @@
+  */
+ export default function bezierCurveTo(fromX, fromY, cpX, cpY, cpX2, cpY2, toX, toY, path = [])
+ {
+-    const n = 20;
++    const n = 64;
+     let dt = 0;
+     let dt2 = 0;
+     let dt3 = 0;
 diff --git a/src/core/index.js b/src/core/index.js
 index f03fe15..7b7f772 100644
 --- a/src/core/index.js
@@ -1894,10 +1748,10 @@ index f03fe15..7b7f772 100644
  export { default as BaseTexture } from './textures/BaseTexture';
 diff --git a/src/core/renderers/pxscene/PXSceneRenderer.js b/src/core/renderers/pxscene/PXSceneRenderer.js
 new file mode 100644
-index 0000000..1e384ea
+index 0000000..2b1650e
 --- /dev/null
 +++ b/src/core/renderers/pxscene/PXSceneRenderer.js
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,255 @@
 +import SystemRenderer from '../SystemRenderer';
 +import { pluginTarget, hex2rgb, rgb2rgba, rgba2hex } from '../../utils';
 +import { RENDERER_TYPE, SCALE_MODES } from '../../const';
@@ -1970,7 +1824,8 @@ index 0000000..1e384ea
 +     * @param {boolean} [skipUpdateTransform=false] - Whether to skip the update transform
 +     * @param {boolean} [forceRender=false] - forceRender a renderTexture, no matter the display object is changed or not.
 +     */
-+    render(displayObject, renderTexture, clear, transform, skipUpdateTransform, forceRender = false)
++    render(displayObject, renderTexture, clear,
++        transform, skipUpdateTransform, forceRender = false) // eslint-disable-line no-unused-vars
 +    {
 +        if (!this.view)
 +        {
@@ -1986,9 +1841,15 @@ index 0000000..1e384ea
 +
 +        if (renderTexture)
 +        {
++            if (!displayObject.renderedObject)
++            {
++                return;
++            }
++
 +            if (!renderTexture._pxsceneRenderTarget)
 +            {
 +                renderTexture._pxsceneRenderTarget = new PXSceneRenderTarget(
++                    this.view,
 +                    renderTexture.width,
 +                    renderTexture.height,
 +                    renderTexture.resolution
@@ -1996,29 +1857,12 @@ index 0000000..1e384ea
 +                renderTexture.source = null; // null for render target texture
 +                renderTexture.valid = true;
 +            }
-+
-+            // User specified clear
-+            if (clear !== undefined)
++            if (clear) // the 'true' clears the texture before the content is rendered
 +            {
-+                forceRender = true;
++                renderTexture._pxsceneRenderTarget.clear();
 +            }
 +
-+            if (forceRender || displayObject !== renderTexture._pxsceneRenderTarget.prevRenderedObject)
-+            {
-+                const child = renderTexture._pxsceneRenderTarget.children[0];
-+
-+                if (clear && child)
-+                {
-+                    renderTexture._pxsceneRenderTarget.clear();
-+                }
-+                // Render to texture (add it as child)
-+                const clonedObject = _.cloneDeep(displayObject);
-+
-+                this._setRenderDirty(clonedObject);
-+                renderTexture._pxsceneRenderTarget.addChild(clonedObject);
-+                renderTexture._pxsceneRenderTarget.updateTransform();
-+                renderTexture._pxsceneRenderTarget.prevRenderedObject = displayObject;
-+            }
++            displayObject.renderedObject.renderTexture = renderTexture._pxsceneRenderTarget.pxSceneRenderTexture;
 +        }
 +        else
 +        {
@@ -2165,10 +2009,10 @@ index 0000000..1e384ea
 +pluginTarget.mixin(PXSceneRenderer);
 diff --git a/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js b/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
 new file mode 100644
-index 0000000..6ccc119
+index 0000000..f121095
 --- /dev/null
 +++ b/src/core/renderers/pxscene/utils/PXSceneRenderTarget.js
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,37 @@
 +import settings from '../../../settings';
 +import Container from '../../../display/Container';
 +
@@ -2181,11 +2025,12 @@ index 0000000..6ccc119
 +export default class PXSceneRenderTarget extends Container
 +{
 +    /**
++     * @param {Objext} view the pxScene root view
 +     * @param {number} width - the width for the newly created canvas
 +     * @param {number} height - the height for the newly created canvas
 +     * @param {number} [resolution=1] - The resolution / device pixel ratio of the canvas
 +     */
-+    constructor(width, height, resolution)
++    constructor(view, width, height, resolution)
 +    {
 +        super();
 +
@@ -2198,61 +2043,15 @@ index 0000000..6ccc119
 +
 +        this.canvasWidth = width;
 +        this.canvasHeight = height;
-+    }
-+
-+    /**
-+     * Clears the canvas that was created by the CanvasRenderTarget class.
-+     *
-+     * @private
-+     */
-+    clear()
-+    {
-+        if (this.renderedObject)
-+        {
-+            this.renderedObject.removeAll();
-+            this.renderedObject.remove();
-+            this.renderedObject = null;
-+        }
-+        this.destroyAllChildren(true);
-+    }
-+
-+    /**
-+     * Destroys this canvas.
-+     *
-+     */
-+    destroy()
-+    {
-+        this.context = null;
-+        this.renderer = null;
-+        if (this.renderedObjectMask)
-+        {
-+            this.renderedObjectMask.remove();
-+            this.renderedObjectMask = null;
-+        }
-+    }
-+
-+    /**
-+     * To be overridden by the subclass
-+     *
-+     * @private
-+     * @param {PIXI.PXSceneRenderer} renderer - The renderer
-+     */
-+    _renderPXScene(renderer) // eslint-disable-line no-unused-vars
-+    {
-+        super._renderPXScene(renderer);
-+        // this is where content itself gets rendered...
-+        if (this.renderedObject)
-+        {
-+            this.renderedObject.clip = true;
-+            this.renderedObject.w = this.canvasWidth;
-+            this.renderedObject.h = this.canvasHeight;
-+            this.renderedObject.sx = this.scale.x;
-+            this.renderedObject.sy = this.scale.y;
-+        }
++        this.pxSceneRenderTexture = view.create({
++            t: 'renderTexture',
++            width: this.width,
++            height: this.height,
++        });
 +    }
 +}
 diff --git a/src/core/sprites/Sprite.js b/src/core/sprites/Sprite.js
-index 28b0b18..1cdd966 100644
+index 28b0b18..017bbd2 100644
 --- a/src/core/sprites/Sprite.js
 +++ b/src/core/sprites/Sprite.js
 @@ -1,5 +1,5 @@
@@ -2347,26 +2146,7 @@ index 28b0b18..1cdd966 100644
              if (tempPoint.y > y1 && tempPoint.y < y1 + height)
              {
                  return true;
-@@ -432,6 +468,18 @@ export default class Sprite extends Container
-         this.shader = null;
-     }
- 
-+    /**
-+     * force the sprite recreate when render next time.
-+     */
-+    forceCreate()
-+    {
-+        if (this.renderedObject)
-+        {
-+            this.renderedObject.dispose();
-+            this.renderedObject = null;
-+        }
-+    }
-+
-     // some helper functions..
- 
-     /**
-@@ -484,21 +532,109 @@ export default class Sprite extends Container
+@@ -484,21 +520,112 @@ export default class Sprite extends Container
      }
  
      /**
@@ -2388,8 +2168,11 @@ index 28b0b18..1cdd966 100644
 +                return false;
 +            }
 +
-+            this._texture.orig.width = spriteWidth;
-+            this._texture.orig.height = spriteHeight;
++            if (!this._texture.baseTexture.hasLoaded)
++            {
++                this._texture.orig.width = spriteWidth;
++                this._texture.orig.height = spriteHeight;
++            }
 +
 +            if (this.widthDirty)
 +            {
@@ -2479,7 +2262,7 @@ index 28b0b18..1cdd966 100644
      }
  
      /**
-@@ -508,15 +644,73 @@ export default class Sprite extends Container
+@@ -508,15 +635,73 @@ export default class Sprite extends Container
       */
      get height()
      {
@@ -2556,7 +2339,7 @@ index 28b0b18..1cdd966 100644
      }
  
      /**
-@@ -577,8 +771,9 @@ export default class Sprite extends Container
+@@ -577,8 +762,9 @@ export default class Sprite extends Container
  
          this._textureID = -1;
          this._textureTrimmedID = -1;
@@ -2569,10 +2352,10 @@ index 28b0b18..1cdd966 100644
              if (value.baseTexture.hasLoaded)
 diff --git a/src/core/sprites/pxscene/PXSceneSpriteRenderer.js b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
 new file mode 100644
-index 0000000..ffc36d0
+index 0000000..a165874
 --- /dev/null
 +++ b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
-@@ -0,0 +1,465 @@
+@@ -0,0 +1,485 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import RenderTexture from '../../textures/RenderTexture';
 +import { Point } from '../../math';
@@ -2606,7 +2389,6 @@ index 0000000..ffc36d0
 +        const texture = sprite._texture;
 +        let spriteWidth = 0;
 +        let spriteHeight = 0;
-+
 +        // Convert local coordinates to world coordinates
 +        const point = new Point(sprite.x, sprite.y);
 +
@@ -2614,27 +2396,64 @@ index 0000000..ffc36d0
 +
 +        const defaultTint = 0xFFFFFF;
 +
-+        if (texture instanceof RenderTexture) // render texture?
++        if (texture instanceof RenderTexture)
 +        {
-+            if (texture._pxsceneRenderTarget)
++            if (!texture._pxsceneRenderTarget) // if didn't create pxscene renderTexture , skip it.
 +            {
-+                const pxsceneRendererTarget = texture._pxsceneRenderTarget;
++                return;
++            }
 +
-+                const cx = pxsceneRendererTarget.canvasWidth * sprite.anchor.x;
-+                const cy = pxsceneRendererTarget.canvasHeight * sprite.anchor.y;
++            const renderTargat = texture._pxsceneRenderTarget;
 +
-+                pxsceneRendererTarget.x = sprite.x - cx;
-+                pxsceneRendererTarget.y = sprite.y - cy;
-+                pxsceneRendererTarget.parent = sprite.parent;
-+                pxsceneRendererTarget.scale = sprite.scale;
-+                pxsceneRendererTarget.renderPXScene(this.renderer);
++            spriteWidth = renderTargat.width;
++            spriteHeight = renderTargat.height;
++
++            if (!sprite.renderedObject)
++            {
++                sprite.renderedObject = this.renderer.view.create({
++                    t: 'rect',
++                    parent: parentRenderedObject,
++                    w: spriteWidth,
++                    h: spriteHeight,
++                    fillColor: 0x00,
++                });
++                sprite.renderedObjectSprite = this.renderer.view.create({
++                    t: 'image',
++                    parent: sprite.renderedObject,
++                    w: spriteWidth,
++                    h: spriteHeight,
++                    texture: renderTargat.pxSceneRenderTexture,
++                });
++            }
++            else
++            {
++                const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
++                const renderedObject = sprite.renderedObject;
++
++                renderedObject.x = attr.x;
++                renderedObject.y = attr.y;
++                renderedObject.cx = attr.cx;
++                renderedObject.cy = attr.cy;
++                renderedObject.a = attr.a;
++                renderedObject.r = attr.r;
++                renderedObject.sx = attr.sx;
++                renderedObject.sy = attr.sy;
 +            }
 +        }
 +        else if (!texture.noFrame) // frame data
 +        {
 +            let maskRect;
 +
-+            if (texture.trim)
++            if (texture.baseTexture.hasLoaded)
++            {
++                maskRect = {
++                    x: texture.orig.x,
++                    y: texture.orig.y,
++                    w: texture.orig.width,
++                    h: texture.orig.height,
++                };
++            }
++            else if (texture.trim)
 +            {
 +                maskRect = {
 +                    x: texture.frame.x,
@@ -2662,7 +2481,7 @@ index 0000000..ffc36d0
 +                sprite.renderedObject = this.renderer.view.create({
 +                    t: 'rect',
 +                    parent: parentRenderedObject,
-+                    fillColor: 0,
++                    fillColor: 0x00,
 +                });
 +
 +                sprite.renderedObjectMask = this.renderer.view.create({
@@ -2673,18 +2492,37 @@ index 0000000..ffc36d0
 +                    draw: false,
 +                });
 +
-+                sprite.renderedObjectSprite = this.renderer.view.create({
++                const renderedObjectSpriteArgs = {
 +                    t: 'image',
 +                    parent: sprite.renderedObject,
 +                    url: texture.baseTexture.source.src,
-+                });
++                };
++
++                if (texture._uvs && !sprite.spine)  // spine don't need use uvs
++                {
++                    const uvs = texture._uvs;
++
++                    renderedObjectSpriteArgs.uvs = [
++                        uvs.x2, uvs.y2,
++                        uvs.x3, uvs.y3,
++                        uvs.x1, uvs.y1,
++                        uvs.x0, uvs.y0,
++                    ];
++                }
++                if (texture.baseTexture.hasLoaded && texture.trim)
++                {
++                    renderedObjectSpriteArgs.w = texture.trim.width;
++                    renderedObjectSpriteArgs.h = texture.trim.height;
++                }
++
++                sprite.renderedObjectSprite = this.renderer.view.create(renderedObjectSpriteArgs);
 +
 +                if (sprite.tint !== defaultTint)
 +                {
 +                    sprite.renderedObjectSpriteContainer = this.renderer.view.create({
 +                        t: 'rect',
 +                        parent: sprite.renderedObject,
-+                        fillColor: 0,
++                        fillColor: 0x00,
 +                    });
 +
 +                    sprite.renderedObjectSprite.parent = sprite.renderedObjectSpriteContainer;
@@ -2804,7 +2642,7 @@ index 0000000..ffc36d0
 +                        sprite.renderedObjectMaskContainer = this.renderer.view.create({
 +                            t: 'rect',
 +                            parent: renderedObject.parent,
-+                            fillColor: 0,
++                            fillColor: 0x00,
 +                        });
 +
 +                        renderedObject.parent = sprite.renderedObjectMaskContainer;
@@ -2821,8 +2659,6 @@ index 0000000..ffc36d0
 +                    renderedObjectMaskContainer.h = this.renderer.height;
 +
 +                    spriteMaskRenderedObject.mask = true;
-+                    spriteMaskRenderedObject.a = 0.5;
-+                    renderedObject.a = 1;
 +                }
 +            }
 +            else
@@ -2897,23 +2733,13 @@ index 0000000..ffc36d0
 +            renderedObjectSprite.cx = attr.cx;
 +            renderedObjectSprite.cy = attr.cy;
 +
-+            if (texture.rotate)
++            if (texture.rotate && sprite.spine)
 +            {
-+                const rotateParam = this._getRotationParamByRotate(texture.rotate, sprite.spine);
++                const rotateParam = this._getSpineRotationParamByRotate(texture.rotate, sprite.spine);
 +
 +                if (rotateParam)
 +                {
 +                    renderedObject.r = attr.r + rotateParam.r;
-+                    if (!sprite.spine)
-+                    {
-+                        renderedObject.cx = spriteWidth * 0.5;
-+                        renderedObject.cy = spriteHeight * 0.5;
-+                        renderedObject.x = attr.x - (attr.sx * renderedObject.cx);
-+                        renderedObject.y = attr.y - (attr.sy * renderedObject.cy);
-+
-+                        renderedObject.sx = attr.sx * rotateParam.sx;
-+                        renderedObject.sy = attr.sy * rotateParam.sy;
-+                    }
 +                }
 +            }
 +
@@ -2939,14 +2765,13 @@ index 0000000..ffc36d0
 +    }
 +
 +    /**
-+     * Calculate rotation param by rotate (from texture packer)
++     * Calculate spine rotation param by rotate (from texture packer)
 +     *
 +     * @param {Number} rotation - Rotation (from texture packer)
-+     * @param {Boolean} isSpine - Sprite is SpineSprite or not
 +     * @returns {Object|null} Rotation param
 +     * @private
 +     */
-+    _getRotationParamByRotate(rotation, isSpine)
++    _getSpineRotationParamByRotate(rotation)
 +    {
 +        if (rotation % 2 !== 0)
 +        {
@@ -2961,19 +2786,6 @@ index 0000000..ffc36d0
 +            rotation -= 8;
 +            flip = true;
 +        }
-+
-+        if (!isSpine)
-+        {
-+            if (rotation === 2)
-+            {
-+                rotation = 6;
-+            }
-+            else if (rotation === 6)
-+            {
-+                rotation = 2;
-+            }
-+        }
-+
 +        const degree = rotation * 45;
 +
 +        return {
@@ -3025,15 +2837,6 @@ index 0000000..ffc36d0
 +        this.renderer = null;
 +    }
 +}
-+
-+// Key: rotation method of texture packer
-+// Value: rotation degree
-+PXSceneSpriteRenderer.rotationDegreeMap = {
-+    0: 0,
-+    2: 270,
-+    4: 180,
-+    6: 90,
-+};
 +
 +PXSceneSpriteRenderer.resourcesMap = {};
 +
@@ -3965,10 +3768,10 @@ index cec8c32..dcd2bfe 100644
 +module.exports = Text;
 diff --git a/src/core/text/TextV8.js b/src/core/text/TextV8.js
 new file mode 100644
-index 0000000..c015fbe
+index 0000000..c3e1a78
 --- /dev/null
 +++ b/src/core/text/TextV8.js
-@@ -0,0 +1,386 @@
+@@ -0,0 +1,361 @@
 +/* eslint max-depth: [2, 8] */
 +import Container from '../display/Container';
 +import { sign } from '../utils';
@@ -3979,13 +3782,6 @@ index 0000000..c015fbe
 +    texture: true,
 +    children: false,
 +    baseTexture: true,
-+};
-+
-+// Map: font family name -> fontUrl
-+// Set key lowercase
-+const fontFamilyUrlMap = {
-+    dejavusans: 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/fonts/DejaVuSans.ttf',
-+    arial: 'https://pxscene-pixi-js-tc-bill.herokuapp.com/assets/fonts/DejaVuSans.ttf',
 +};
 +
 +/**
@@ -4274,20 +4070,15 @@ index 0000000..c015fbe
 +        {
 +            fontFamilies = style.fontFamily.split(',');
 +        }
-+
 +        for (let i = fontFamilies.length - 1; i >= 0; i--)
 +        {
 +            // Trim any extra white-space
 +            const fontFamily = fontFamilies[i].trim();
 +
 +            fontFamilies[i] = fontFamily;
-+
-+            // Create font resource
-+            const fontFamilyKey = TextV8._getFontFamilyKey(fontFamily);
-+
-+            if (renderer && !TextV8.fontResourceCache[fontFamilyKey])
++            if (renderer && !TextV8.fontResourceCache[fontFamily])
 +            {
-+                const fontUrl = fontFamilyUrlMap[fontFamilyKey];
++                const fontUrl = fontFamily;
 +
 +                if (fontUrl)
 +                {
@@ -4298,7 +4089,7 @@ index 0000000..c015fbe
 +
 +                    fontRes.ready.then((font) =>
 +                    {
-+                        TextV8.fontResourceCache[fontFamilyKey] = font;
++                        TextV8.fontResourceCache[fontFamily] = font;
 +                    });
 +                }
 +            }
@@ -4313,26 +4104,13 @@ index 0000000..c015fbe
 +    }
 +
 +    /**
-+     * Get font family key in the map
-+     * @param {String} fontFamily - font family name
-+     * @returns {String} Font family key.
-+     * @private
-+     */
-+    static _getFontFamilyKey(fontFamily)
-+    {
-+        return fontFamily.toLowerCase();
-+    }
-+
-+    /**
 +     * Get font resource by Font family.
 +     * @param {String} fontFamily - Font family name
 +     * @returns {Object} FontResource
 +     */
 +    static getFontResourceByFamily(fontFamily)
 +    {
-+        const fontFamilyKey = this._getFontFamilyKey(fontFamily);
-+
-+        return TextV8.fontResourceCache[fontFamilyKey];
++        return TextV8.fontResourceCache[fontFamily];
 +    }
 +
 +    /**
@@ -5278,10 +5056,10 @@ index 0000000..93d923a
 +}
 diff --git a/src/core/text/pxscene/PXSceneTextRenderer.js b/src/core/text/pxscene/PXSceneTextRenderer.js
 new file mode 100644
-index 0000000..4971e74
+index 0000000..12c5407
 --- /dev/null
 +++ b/src/core/text/pxscene/PXSceneTextRenderer.js
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,212 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import { string2hexV8 } from '../../utils';
 +import { Point } from '../../math';
@@ -5315,7 +5093,7 @@ index 0000000..4971e74
 +
 +        for (let i = 0; i < font.fontFamilies.length; ++i)
 +        {
-+            fontResource = text.fontResourceCache[font.fontFamilies[i].toLowerCase()];
++            fontResource = text.fontResourceCache[font.fontFamilies[i]];
 +            if (fontResource)
 +            {
 +                break;
@@ -5331,16 +5109,19 @@ index 0000000..4971e74
 +        // Convert local coordinates to world coordinates
 +        const point = new Point(text.x, text.y);
 +        const globalPoint = text.parent.toGlobal(point);
-+
 +        const textMeasure = fontResource.measureText(font.fontSize, text.text);
 +
-+        // Calculate all attributes
 +        if (text.renderedObject)
 +        {
 +            const renderedObject = text.renderedObject;
 +
++            // Calculate all attributes
 +            const attr = this._calcTextAttributes(globalPoint, text, textMeasure);
 +
++            if (text.renderedObjectText.text.trim() !== text.text.trim())
++            {
++                text.renderedObjectText.text = text.text;
++            }
 +            renderedObject.x = attr.x;
 +            renderedObject.y = attr.y;
 +            renderedObject.cx = attr.cx;
@@ -5374,6 +5155,8 @@ index 0000000..4971e74
 +            const createTextStyle = {
 +                t: 'textBox',
 +                text: text.text,
++                bold: font.fontWeight === 'bold',
++                italic: font.fontStyle === 'italic',
 +                wordWrap: !!style.wordWrap,
 +                w: (!!style.wordWrap && style.wordWrapWidth) || 0,
 +                pixelSize: font.fontSize,
@@ -5381,22 +5164,38 @@ index 0000000..4971e74
 +                parent: text.renderedObject,
 +            };
 +
-+            if (style.dropShadow)
++            if (style.dropShadow && style.dropShadowDistance > 0)
 +            {
 +                const shadowOffset = this._calcShadowOffset(style.dropShadowAngle, style.dropShadowDistance);
 +
-+                // Create shadow first.
-+                createTextStyle.textColor = string2hexV8(style.dropShadowColor);
-+                createTextStyle.x = shadowOffset.xOffset;
-+                createTextStyle.y = shadowOffset.yOffset;
-+                text.renderedObjectTextShadow = this.renderer.view.create(createTextStyle);
++                createTextStyle.dropShadowColor = string2hexV8(style.dropShadowColor);
++                createTextStyle.dropShadow = true;
++                createTextStyle.dropShadowOffsetX = shadowOffset.xOffset;
++                createTextStyle.dropShadowOffsetY = shadowOffset.yOffset;
++                createTextStyle.dropShadowBlur = style.dropShadowBlur;
 +            }
 +
 +            const textColor = Array.isArray(style.fill) ? style.fill[0] : style.fill;
++            let gradientColor = null;
++
++            if (Array.isArray(style.fill) && style.fill.length > 1)
++            {
++                gradientColor = style.fill[1];
++            }
 +
 +            createTextStyle.textColor = string2hexV8(textColor);
++            if (gradientColor)
++            {
++                createTextStyle.gradientColor = string2hexV8(gradientColor);
++            }
++            if (style.strokeThickness && style.strokeThickness > 0)
++            {
++                createTextStyle.strokeWidth = style.strokeThickness;
++                createTextStyle.strokeColor = string2hexV8(style.stroke);
++            }
 +            createTextStyle.x = 0;
 +            createTextStyle.y = 0;
++
 +            text.renderedObjectText = this.renderer.view.create(createTextStyle);
 +
 +            text.renderedObject.w = textMeasure.w;
@@ -5548,10 +5347,10 @@ index d510075..2f1ccff 100644
          /**
           * This will let a renderer know that a texture has been updated (used mainly for webGL uv updates)
 diff --git a/src/core/ticker/Ticker.js b/src/core/ticker/Ticker.js
-index d98a1f0..94726b9 100644
+index d98a1f0..ad7bd45 100644
 --- a/src/core/ticker/Ticker.js
 +++ b/src/core/ticker/Ticker.js
-@@ -1,9 +1,85 @@
+@@ -1,8 +1,93 @@
  import settings from '../settings';
  import EventEmitter from 'eventemitter3';
 +import {
@@ -5560,93 +5359,106 @@ index d98a1f0..94726b9 100644
  
  // Internal event used by composed emitter
  const TICK = 'tick';
- 
-+const ONE_FRAME_TIME = 16;
++let functionsInitlized = false;
 +
 +let performance;
 +let requestAnimationFrame;
 +let cancelAnimationFrame;
 +
-+// Define some global functions
-+if (isV8())
++/**
++ * init global functions
++ * pixi.js mainloop and pxscene mainloop is the same loop (for v8).
++ */
++const initFunctions = () =>
 +{
-+    // Date.now
-+    if (!(Date.now && Date.prototype.getTime))
++    // Define some global functions
++    if (isV8())
 +    {
-+        Date.now = function now()
-+        {
-+            return new Date().getTime();
-+        };
-+    }
++        const PXSceneHelper = require('../utils/PXSceneHelper').default; // eslint-disable-line global-require
++        const startTime = new Date().getTime();
++        let lastTime = null;
++        let frameFunctionMap = {};
++        let tmpFrameFunctionMap = null;
++        let frameFunctionIndex = 0;
 +
-+    // performance.now
-+    if (!(performance && performance.now))
-+    {
-+        const startTime = Date.now();
++        performance = {};
 +
-+        if (!performance)
-+        {
-+            performance = {};
-+        }
++        /**
++         *  get the time performance time
++         * @return {number} the now time - start time
++         */
++        performance.now = () => lastTime - startTime; // performance.now
 +
-+        performance.now = () => Date.now() - startTime;
-+    }
-+
-+    // requestAnimationFrame
-+    let lastTime = Date.now();
-+
-+    if (!requestAnimationFrame)
-+    {
++        /**
++         * request Animation Frame , save callback
++         * @param  {Function} callback the ticker callback
++         * @return {number}   the animation frame id
++         */
 +        requestAnimationFrame = (callback) =>
 +        {
 +            if (typeof callback !== 'function')
 +            {
 +                throw new TypeError(`${callback}is not a function`);
 +            }
++            const animationFrameId = frameFunctionIndex++;
 +
-+            const currentTime = Date.now();
-+            let delay = ONE_FRAME_TIME + lastTime - currentTime;
++            frameFunctionMap[animationFrameId] = callback;
 +
-+            if (delay < 0)
-+            {
-+                delay = 0;
-+            }
-+
-+            lastTime = currentTime;
-+
-+            return setTimeout(() =>
-+            {
-+                lastTime = Date.now();
-+                callback(performance.now());
-+            }, delay);
++            return animationFrameId;
 +        };
-+    }
 +
-+    if (!cancelAnimationFrame)
++        /**
++         * cancel the animation frame callback
++         * @param  {number} id the animation frame id
++         */
++        cancelAnimationFrame = (id) =>
++        {
++            frameFunctionMap[id] = null;
++        };
++
++        // pxscene onUpdate function
++        PXSceneHelper.getInstance().getPxScene().on('onUpdate', () =>
++        {
++            lastTime = new Date().getTime();
++            tmpFrameFunctionMap = frameFunctionMap; // save functions
++            frameFunctionMap = {};  // clear map use for requestAnimationFrame
++            for (const index in tmpFrameFunctionMap)
++            {
++                if (tmpFrameFunctionMap && tmpFrameFunctionMap[index])
++                    {
++                    tmpFrameFunctionMap[index](lastTime);
++                } // ticker
++            }
++            tmpFrameFunctionMap = null; // release old map
++        });
++    }
++    else
 +    {
-+        cancelAnimationFrame = (id) => clearInterval(id);
++        performance = window.performance;
++        requestAnimationFrame = window.requestAnimationFrame;
++        cancelAnimationFrame = window.cancelAnimationFrame;
 +    }
-+}
-+else
-+{
-+    performance = window.performance;
-+    requestAnimationFrame = window.requestAnimationFrame;
-+    cancelAnimationFrame = window.cancelAnimationFrame;
-+}
 +
++    functionsInitlized = true;
++};
+ 
  /**
   * A Ticker class that runs an update loop that other objects listen to.
-  * This class is composed around an EventEmitter object to add listeners
-@@ -132,7 +208,7 @@ export default class Ticker
+@@ -130,9 +215,11 @@ export default class Ticker
+                 // Invoke listeners now
+                 this.update(time);
                  // Listener side effects may have modified ticker state.
-                 if (this.started && this._requestId === null && this._emitter.listeners(TICK, true))
+-                if (this.started && this._requestId === null && this._emitter.listeners(TICK, true))
++                if (this.started
++                    && this._requestId === null
++                    && this._emitter.listeners(TICK, true))
                  {
 -                    this._requestId = requestAnimationFrame(this._tick);
 +                    this._requestId = requestAnimationFrame(this._tick); // eslint-disable-line block-scoped-var
                  }
              }
          };
-@@ -150,8 +226,8 @@ export default class Ticker
+@@ -150,8 +237,8 @@ export default class Ticker
          if (this._requestId === null && this._emitter.listeners(TICK, true))
          {
              // ensure callbacks get correct delta
@@ -5657,7 +5469,7 @@ index d98a1f0..94726b9 100644
          }
      }
  
-@@ -164,7 +240,7 @@ export default class Ticker
+@@ -164,7 +251,7 @@ export default class Ticker
      {
          if (this._requestId !== null)
          {
@@ -5666,7 +5478,19 @@ index d98a1f0..94726b9 100644
              this._requestId = null;
          }
      }
-@@ -287,7 +363,7 @@ export default class Ticker
+@@ -254,6 +341,11 @@ export default class Ticker
+      */
+     start()
+     {
++        if (!functionsInitlized)
++        {
++            initFunctions();
++        }
++
+         if (!this.started)
+         {
+             this.started = true;
+@@ -287,7 +379,7 @@ export default class Ticker
       *
       * @param {number} [currentTime=performance.now()] - the current time of execution
       */
@@ -5841,6 +5665,75 @@ index 2f9c71b..9b34624 100644
   * Returns sign of number
   *
   * @memberof PIXI.utils
+diff --git a/src/core/utils/pxSceneHelper.js b/src/core/utils/pxSceneHelper.js
+new file mode 100644
+index 0000000..3cb0300
+--- /dev/null
++++ b/src/core/utils/pxSceneHelper.js
+@@ -0,0 +1,46 @@
++/**
++ * pxscene helper class , use to store the pxscene instance
++ * this a single instance class , please use getInstance to use it
++ */
++export default class PXSceneHelper
++{
++    /**
++     * PXSceneHelper constructor
++     */
++    constructor()
++    {
++        this._pxSceneInstance = null;
++    }
++
++    /**
++     * get the PXSceneHelper instance
++     * @return {PXSceneHelper} the PXSceneHelper instance
++     */
++    static getInstance()
++    {
++        if (!PXSceneHelper.instance)
++        {
++            PXSceneHelper.instance = new PXSceneHelper();
++        }
++
++        return PXSceneHelper.instance;
++    }
++
++    /**
++     * inject pxscene instance
++     * @param {Object} pxscene the pxscene instance
++     */
++    injectPxScene(pxscene)
++    {
++        this._pxSceneInstance = pxscene;
++    }
++
++    /**
++     * get the pxscene instance
++     * @return {Object} the pxscene instance
++     */
++    getPxScene()
++    {
++        return this._pxSceneInstance;
++    }
++}
+diff --git a/src/extras/TilingSprite.js b/src/extras/TilingSprite.js
+index fe82451..aa1aea3 100644
+--- a/src/extras/TilingSprite.js
++++ b/src/extras/TilingSprite.js
+@@ -333,6 +333,12 @@ export default class TilingSprite extends core.Sprite
+ 
+         this.tileTransform = null;
+         this.uvTransform = null;
++
++        if (this.renderParent)
++        {
++            this.renderParent.remove();
++            this.tiles = null;
++        }
+     }
+ 
+     /**
 diff --git a/src/extras/cacheAsBitmap.js b/src/extras/cacheAsBitmap.js
 index 5dd5640..c51d423 100644
 --- a/src/extras/cacheAsBitmap.js
@@ -5983,10 +5876,10 @@ index bbd8bbf..3ca7a92 100644
  
 diff --git a/src/extras/pxscene/PXSceneTilingSpriteRenderer.js b/src/extras/pxscene/PXSceneTilingSpriteRenderer.js
 new file mode 100644
-index 0000000..9c687ee
+index 0000000..81d829e
 --- /dev/null
 +++ b/src/extras/pxscene/PXSceneTilingSpriteRenderer.js
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,189 @@
 +import PXSceneRenderer from '../../core/renderers/pxscene/PXSceneRenderer';
 +
 +import { Point } from '../../core/math';
@@ -6016,22 +5909,16 @@ index 0000000..9c687ee
 +    render(sprite)
 +    {
 +        const texture = sprite._texture;
-+
++        const parentRenderedObject = (sprite.parent && sprite.parent.renderedObject) || this.renderer.context;
 +        // Convert local coordinates to world coordinates
 +        const point = new Point(sprite.x, sprite.y);
 +        const globalPoint = sprite.parent.toGlobal(point);
-+        let spriteWidth = 0;
-+        let spriteHeight = 0;
 +
 +        // Calculate all attributes
-+        if (sprite.imgResource && sprite.renderedObject)
++        if (sprite.imgResource && sprite.tiles && sprite.tiles.length > 0 && sprite.renderParent)
 +        {
-+            const renderedObject = sprite.renderedObject;
-+
-+            spriteWidth = renderedObject.resource.w;
-+            spriteHeight = renderedObject.resource.h;
-+
-+            const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
++            const attr = this._calcSpriteAttributes(globalPoint, sprite.width, sprite.height, sprite);
++            const renderedObject = sprite.renderParent;
 +
 +            renderedObject.x = attr.x;
 +            renderedObject.y = attr.y;
@@ -6041,6 +5928,32 @@ index 0000000..9c687ee
 +            renderedObject.r = attr.r;
 +            renderedObject.sx = attr.sx;
 +            renderedObject.sy = attr.sy;
++            const tp = this._getTilePropeties(sprite, texture);
++
++            sprite.tiles.forEach((tr) => (tr.a = 0));
++            for (let i = 0; i < tp.x; i++)
++            {
++                for (let j = 0; j < tp.y; j++)
++                {
++                    const index = (i * tp.y) + j;
++                    let tileRenderObject = sprite.tiles[index];
++
++                    if (!tileRenderObject)
++                    {
++                        tileRenderObject = this.renderer.view.create({ // if didn't create before , create it
++                            t: 'image',
++                            parent: sprite.renderParent,
++                            resource: sprite.imgResource,
++                        });
++                        sprite.tiles.push(tileRenderObject);
++                    }
++                    tileRenderObject.x = (tp.tw * i) + tp.offsetX;
++                    tileRenderObject.y = (tp.th * j) + tp.offsetY;
++                    tileRenderObject.sx = tp.tileScaleX + 0.01; // to fix the gap
++                    tileRenderObject.sy = tp.tileScaleY + 0.01;
++                    tileRenderObject.a = 1;
++                }
++            }
 +        }
 +        else if (!sprite.imgResource)
 +        {
@@ -6051,33 +5964,67 @@ index 0000000..9c687ee
 +
 +            sprite.imgResource.ready.then((imgResource) =>
 +            {
-+                const width = this.renderer.context.w;
-+                const height = this.renderer.context.h;
-+                const attr = this._calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite);
-+
-+                const parent = sprite.parent.renderedObject || this.renderer.context;
-+
-+                sprite.renderedObject = this.renderer.view.create({
-+                    t: 'image',
-+                    parent,
-+                    x: attr.x,
-+                    y: attr.y,
-+                    cx: attr.cx,
-+                    cy: attr.cy,
-+                    a: attr.a,
-+                    r: attr.r,
-+                    sx: attr.sx,
-+                    sy: attr.sy,
-+                    stretchX: 2,
-+                    stretchY: 2,
-+                    w: width * 20, // spriteWidth,
-+                    h: height * 20, // spriteHeight,
-+                    resource: imgResource,
++                texture.trim = { x: 0, y: 0, width: imgResource.w, height: imgResource.h, type: 1 };
++                texture.orig = texture.trim;
++                sprite.renderParent = this.renderer.view.create({
++                    t: 'rect',
++                    parent: parentRenderedObject,
++                    w: sprite.width,
++                    h: sprite.height,
++                    fillColor: 0x00,
 +                });
++
++                sprite.tiles = [];  // cache tile
++                const tp = this._getTilePropeties(sprite, texture);
++
++                for (let i = 0; i < tp.x; i++)
++                {
++                    for (let j = 0; j < tp.y; j++)
++                    {
++                        const tileRenderObject = this.renderer.view.create({
++                            t: 'image',
++                            parent: sprite.renderParent,
++                            x: (tp.tw * i) + tp.offsetX,
++                            y: (tp.th * j) + tp.offsetY,
++                            sx: tp.tileScaleX,
++                            sy: tp.tileScaleY,
++                            resource: imgResource,
++                        });
++
++                        sprite.tiles.push(tileRenderObject);
++                    }
++                }
 +            });
 +        }
 +    }
 +
++    /**
++     * get the tile properties
++     *
++     * @param {PIXI.Sprite} ts the tile sprite
++     * @param {PIXI.Texure} texture the tile sprite texture
++     * @returns {Object} the tile properties
++     * @private
++     */
++    _getTilePropeties(ts, texture)
++    {
++        const tileScaleX = ts.tileScale.x;
++        const tileScaleY = ts.tileScale.y;
++
++        const w = ts.width;
++        const h = ts.height;
++
++        const tw = texture.trim.width * tileScaleX; // ts tile width
++        const th = texture.trim.height * tileScaleY; // ts tile height
++
++        const offsetX = ((ts.tilePosition.x % tw) - tw) % tw;
++        const offsetY = ((ts.tilePosition.y % th) - th) % th;
++
++        const x = Math.ceil((w - offsetX) / (texture.trim.width * tileScaleX)); // tile row number
++        const y = Math.ceil((h - offsetY) / (texture.trim.height * tileScaleY)); // tile column number
++
++        return { tileScaleX, tileScaleY, w, h, tw, th, offsetX, offsetY, x, y };
++    }
 +    /**
 +     * Calculate sprite attribute.
 +     *
@@ -6090,36 +6037,14 @@ index 0000000..9c687ee
 +     */
 +    _calcSpriteAttributes(globalPoint, spriteWidth, spriteHeight, sprite)
 +    {
-+        const width = this.renderer.context.w;
-+        const height = this.renderer.context.h;
-+
-+        const imgWidth = sprite.imgResource.w;
-+        const imgHeight = sprite.imgResource.h;
-+
-+        const numTileW = Math.ceil(width / imgWidth);
-+        const numTileH = Math.ceil(height / imgHeight);
-+
-+        const modX = (sprite.tilePosition.x) % (numTileW * imgWidth);
-+        const modY = (sprite.tilePosition.y) % (numTileH * imgHeight);
-+
 +        const cx = spriteWidth * sprite.anchor.x;
 +        const cy = spriteHeight * sprite.anchor.y;
-+        const x = globalPoint.x - (spriteWidth * sprite.anchor.x)
-+            - (numTileW * imgWidth * 3) + (modX * sprite.tileScale.x);
-+        const y = globalPoint.y - (spriteHeight * sprite.anchor.y)
-+            - (numTileH * imgHeight * 3) + (modY * sprite.tileScale.y);
-+
-+        const a = imgWidth > 0 ? 1 : 0;
-+        const worldTransform = {
-+            skew: {},
-+            scale: {},
-+            position: {},
-+        };
-+
-+        sprite.transform.worldTransform.decompose(worldTransform);
-+        const r = worldTransform.rotation * (180 / Math.PI);
-+        const sx = sprite.tileScale.x;
-+        const sy = sprite.tileScale.y;
++        const x = globalPoint.x - cx;
++        const y = globalPoint.y - cy;
++        const a = sprite.alpha;
++        const r = sprite.rotation * (180 / Math.PI);
++        const sx = sprite.scale.x;
++        const sy = sprite.scale.y;
 +
 +        return {
 +            x,
@@ -8276,6 +8201,3 @@ index d963dee..f54d570 100644
 +        window.Uint16Array = Array;
 +    }
  }
--- 
-2.10.1 (Apple Git-78)
-

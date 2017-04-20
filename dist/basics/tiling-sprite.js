@@ -1,8 +1,8 @@
-const ASSET_URL = 'http://127.0.0.1:8081';
+const ASSET_URL = 'http://pxscene-pixi-dev.herokuapp.com';
 const PIXI_PATH = ASSET_URL + '/pixi/';
 const IMAGE_PATH = ASSET_URL + '/assets/p2.jpeg';
 
-px.configImport({"pxFramework:": "http://127.0.0.1:8000/"});
+px.configImport({"pxFramework:": PIXI_PATH});
 px.import({ scene: 'px:scene.1.js',
             pixi: 'pxFramework:pixi.js' }).then( function ready(imports) {
 

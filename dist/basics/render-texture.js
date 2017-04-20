@@ -1,8 +1,8 @@
-const ASSET_URL = 'http://127.0.0.1:8081';
+const ASSET_URL = 'http://pxscene-pixi-dev.herokuapp.com';
 const PIXI_PATH = ASSET_URL + '/pixi/';
 const BUNNY_IMAGE_PATH = ASSET_URL + '/assets/basic/bunny.png';
 
-px.configImport({"pxFramework:": 'http://127.0.0.1:8000/'});
+px.configImport({"pxFramework:": PIXI_PATH});
 px.import({ scene: 'px:scene.1.js',
             pixi: 'pxFramework:pixi.js' }).then( function ready(imports) {
 
@@ -30,7 +30,7 @@ px.import({ scene: 'px:scene.1.js',
   sprite.x = 450;
   sprite.y = 60;
   app.stage.addChild(sprite);
-  
+
   app.ticker.add(function() {
       app.renderer.render(container, rt);
   });

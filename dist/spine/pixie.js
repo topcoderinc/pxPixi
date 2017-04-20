@@ -1,4 +1,4 @@
-const ASSET_URL = 'http://127.0.0.1:8081';
+const ASSET_URL = 'http://pxscene-pixi-dev.herokuapp.com';
 const PIXI_PATH = ASSET_URL + '/pixi/';
 const PIXIE_JSON_PATH = ASSET_URL + '/assets/spine/Pixie.json';
 const BG_IMAGE_PATH = ASSET_URL + '/assets/spine/iP4_BGtile.jpg';

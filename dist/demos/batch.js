@@ -1,4 +1,4 @@
-const ASSET_URL = 'http://127.0.0.1:8081';
+const ASSET_URL = 'http://pxscene-pixi-dev.herokuapp.com';
 const PIXI_PATH = ASSET_URL + '/pixi/';
 const TINY_MAGGOT_IMAGE_PATH = ASSET_URL + '/assets/demo/tinyMaggot.png';
 

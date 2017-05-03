@@ -14,7 +14,14 @@ px.import({ scene: 'px:scene.1.js',
       app.renderer.width,
       app.renderer.height
   );
+  
+  var renderTexture2 = PIXI.RenderTexture.create(
+      app.renderer.width,
+      app.renderer.height
+  );
+
   var currentTexture = renderTexture;
+
 
   // create a new sprite that uses the render texture we created above
   var outputSprite = new PIXI.Sprite(currentTexture);
@@ -67,6 +74,13 @@ px.import({ scene: 'px:scene.1.js',
       }
 
       count += 0.01;
+
+      // swap the buffers ...
+      var temp = renderTexture;
+      renderTexture = renderTexture2;
+      renderTexture2 = temp;
+
+      // set the new texture
       outputSprite.texture = renderTexture;
 
       // twist this up!
@@ -75,7 +89,7 @@ px.import({ scene: 'px:scene.1.js',
 
       // render the stage to the texture
       // the 'true' clears the texture before the content is rendered
-      app.renderer.render(app.stage, renderTexture, false);
+      app.renderer.render(app.stage, renderTexture2, false);
   });
 
 }).catch( function importFailed(err){

@@ -26,7 +26,7 @@ px.import({ scene: 'px:scene.1.js',
   strip.x = -40;
   strip.y = 300;
 
-  // app.stage.addChild(strip);
+  app.stage.addChild(strip);
 
   var g = new PIXI.GraphicsV8();
   g.x = strip.x;

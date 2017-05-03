@@ -35,7 +35,7 @@ px.import({
     lighting.on('display', function(element) {
         element.blendMode = PIXI.BLEND_MODES.ADD
     });
-    lighting.filters = [new PIXI.filters.VoidFilter()];
+    lighting.filters = [new PIXI.filters.VoidFilter()]; 
     lighting.filters[0].blendMode = PIXI.BLEND_MODES.MULTIPLY;
 
     lighting.filterArea = new PIXI.Rectangle(0, 0, WIDTH, HEIGHT);
@@ -44,7 +44,8 @@ px.import({
     app.stage.addChild(lighting);
 
     var ambient = new PIXI.GraphicsV8();
-    ambient.beginFill(0x808080, 0.5);
+    ambient.beginFill(0x808080, 1);
+    ambient.blendMode = PIXI.BLEND_MODES.MULTIPLY; // pxscene not support filters and layer, add blendMode manully
     ambient.drawRect(0, 0, WIDTH, HEIGHT);
     ambient.endFill();
     lighting.addChild(ambient); //<-- try comment it
@@ -92,7 +93,8 @@ px.import({
         lightbulb.beginFill((rr << 16) + (rg << 8) + rb, 1.0);
         lightbulb.drawCircle(0, 0, rad);
         lightbulb.endFill();
-        lightbulb.parentLayer = lighting; //<-- try comment it
+        lightbulb.blendMode = PIXI.BLEND_MODES.ADD; // pxscene not support filters and layer, add blendMode manully
+        // lightbulb.parentLayer = lighting; //<-- try comment it
 
         container.addChild(lightbulb);
 
@@ -101,7 +103,7 @@ px.import({
         return container;
     }
 
-    for (var i = 0; i < 10; i++) {
+    for (var i = 0; i < 40; i++) {
         bunnyWorld.addChild(createBunny());
     }
 

@@ -1381,10 +1381,10 @@ index 0000000..b409c29
 +GraphicsV8._SPRITE_TEXTURE = null;
 diff --git a/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
 new file mode 100644
-index 0000000..f5ecd04
+index 0000000..1790a43
 --- /dev/null
 +++ b/src/core/graphics/pxscene/PXSceneGraphicsRenderer.js
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,317 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import { SHAPES } from '../../const';
 +import earcut from 'earcut';
@@ -1522,7 +1522,7 @@ index 0000000..f5ecd04
 +                    this.renderPolygon(newPoints, false); // render the inner solid polygon
 +                    this.renderPolygon(points.slice(0, points.length - 2), true); // render the polygon outline
 +
-+                    for (let j = 0; j < data.holes.length; j++)
++                    for (let j = 0; j < holes.length; j++)
 +                    {
 +                        const hole = holes[j];
 +
@@ -1621,6 +1621,7 @@ index 0000000..f5ecd04
 +        const polyon = this.renderer.view.create({
 +            t: 'graphic',
 +            parent: parentRenderedObject,
++            blendMode: graphics.blendMode,
 +            type: 'polygon',
 +            fillColor: outLine ? 0x00 : renderOptions.fillColor,
 +            points, // dont need the last point(same value with first)
@@ -1649,6 +1650,7 @@ index 0000000..f5ecd04
 +        const rect = this.renderer.view.create({
 +            t: 'graphic',
 +            type: 'lines',
++            blendMode: graphics.blendMode,
 +            points,
 +            parent: parentRenderedObject,
 +            lineColor: renderOptions.strokeLineColor,
@@ -1674,6 +1676,7 @@ index 0000000..f5ecd04
 +        const renderOptions = this.renderOptions;
 +        const rect = this.renderer.view.create({
 +            t: 'rect',
++            blendMode: graphics.blendMode,
 +            parent: parentRenderedObject,
 +            fillColor: renderOptions.fillColor,
 +            radius: shape.radius || 0,
@@ -1748,7 +1751,7 @@ index f03fe15..7b7f772 100644
  export { default as BaseTexture } from './textures/BaseTexture';
 diff --git a/src/core/renderers/pxscene/PXSceneRenderer.js b/src/core/renderers/pxscene/PXSceneRenderer.js
 new file mode 100644
-index 0000000..2b1650e
+index 0000000..0218d98
 --- /dev/null
 +++ b/src/core/renderers/pxscene/PXSceneRenderer.js
 @@ -0,0 +1,255 @@
@@ -1862,7 +1865,7 @@ index 0000000..2b1650e
 +                renderTexture._pxsceneRenderTarget.clear();
 +            }
 +
-+            displayObject.renderedObject.renderTexture = renderTexture._pxsceneRenderTarget.pxSceneRenderTexture;
++            displayObject.renderedObject.drawToFBO(renderTexture._pxsceneRenderTarget.pxSceneRenderTexture);
 +        }
 +        else
 +        {
@@ -2352,10 +2355,10 @@ index 28b0b18..017bbd2 100644
              if (value.baseTexture.hasLoaded)
 diff --git a/src/core/sprites/pxscene/PXSceneSpriteRenderer.js b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
 new file mode 100644
-index 0000000..a165874
+index 0000000..8ed32cd
 --- /dev/null
 +++ b/src/core/sprites/pxscene/PXSceneSpriteRenderer.js
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,498 @@
 +import PXSceneRenderer from '../../renderers/pxscene/PXSceneRenderer';
 +import RenderTexture from '../../textures/RenderTexture';
 +import { Point } from '../../math';
@@ -2398,6 +2401,17 @@ index 0000000..a165874
 +
 +        if (texture instanceof RenderTexture)
 +        {
++            if (!sprite.renderedObject)  // create it first
++            {
++                sprite.renderedObject = this.renderer.view.create({
++                    t: 'rect',
++                    parent: parentRenderedObject,
++                    w: spriteWidth,
++                    h: spriteHeight,
++                    fillColor: 0x00,
++                });
++            }
++
 +            if (!texture._pxsceneRenderTarget) // if didn't create pxscene renderTexture , skip it.
 +            {
 +                return;
@@ -2408,15 +2422,8 @@ index 0000000..a165874
 +            spriteWidth = renderTargat.width;
 +            spriteHeight = renderTargat.height;
 +
-+            if (!sprite.renderedObject)
++            if (!sprite.renderedObjectSprite)   // create sprite from texture
 +            {
-+                sprite.renderedObject = this.renderer.view.create({
-+                    t: 'rect',
-+                    parent: parentRenderedObject,
-+                    w: spriteWidth,
-+                    h: spriteHeight,
-+                    fillColor: 0x00,
-+                });
 +                sprite.renderedObjectSprite = this.renderer.view.create({
 +                    t: 'image',
 +                    parent: sprite.renderedObject,
@@ -2425,20 +2432,18 @@ index 0000000..a165874
 +                    texture: renderTargat.pxSceneRenderTexture,
 +                });
 +            }
-+            else
-+            {
-+                const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
-+                const renderedObject = sprite.renderedObject;
 +
-+                renderedObject.x = attr.x;
-+                renderedObject.y = attr.y;
-+                renderedObject.cx = attr.cx;
-+                renderedObject.cy = attr.cy;
-+                renderedObject.a = attr.a;
-+                renderedObject.r = attr.r;
-+                renderedObject.sx = attr.sx;
-+                renderedObject.sy = attr.sy;
-+            }
++            const attr = this._calcSpriteAttributes(point, spriteWidth, spriteHeight, sprite);
++            const renderedObject = sprite.renderedObject;
++
++            renderedObject.x = attr.x;
++            renderedObject.y = attr.y;
++            renderedObject.cx = attr.cx;
++            renderedObject.cy = attr.cy;
++            renderedObject.a = attr.a;
++            renderedObject.r = attr.r;
++            renderedObject.sx = attr.sx;
++            renderedObject.sy = attr.sy;
 +        }
 +        else if (!texture.noFrame) // frame data
 +        {
@@ -2570,11 +2575,17 @@ index 0000000..a165874
 +            }
 +            else
 +            {
-+                sprite.renderedObjectSprite = this.renderer.view.create({
-+                    t: 'image',
-+                    parent: sprite.renderedObject,
++                this.renderer.view.create({
++                    t: 'imageResource',
 +                    url: texture.baseTexture.source.src,
-+                    mask: sprite.tint !== defaultTint,
++                }).ready.then((imgResource) =>
++                {
++                    sprite.renderedObjectSprite = this.renderer.view.create({
++                        t: 'image',
++                        parent: sprite.renderedObject,
++                        resource: imgResource,
++                        mask: sprite.tint !== defaultTint,
++                    });
 +                });
 +            }
 +
@@ -2592,6 +2603,11 @@ index 0000000..a165874
 +
 +        function innerRenderSprite()
 +        {
++            if (!sprite.renderedObjectSprite)
++            {
++                return;
++            }
++
 +            sprite.updateAttr();
 +
 +            const renderedObject = sprite.renderedObject;
@@ -5876,10 +5892,10 @@ index bbd8bbf..3ca7a92 100644
  
 diff --git a/src/extras/pxscene/PXSceneTilingSpriteRenderer.js b/src/extras/pxscene/PXSceneTilingSpriteRenderer.js
 new file mode 100644
-index 0000000..81d829e
+index 0000000..ae70bea
 --- /dev/null
 +++ b/src/extras/pxscene/PXSceneTilingSpriteRenderer.js
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,192 @@
 +import PXSceneRenderer from '../../core/renderers/pxscene/PXSceneRenderer';
 +
 +import { Point } from '../../core/math';
@@ -5913,6 +5929,17 @@ index 0000000..81d829e
 +        // Convert local coordinates to world coordinates
 +        const point = new Point(sprite.x, sprite.y);
 +        const globalPoint = sprite.parent.toGlobal(point);
++
++        if (!sprite.renderParent)
++        {
++            sprite.renderParent = this.renderer.view.create({
++                t: 'rect',
++                parent: parentRenderedObject,
++                w: sprite.width,
++                h: sprite.height,
++                fillColor: 0x00,
++            });
++        }
 +
 +        // Calculate all attributes
 +        if (sprite.imgResource && sprite.tiles && sprite.tiles.length > 0 && sprite.renderParent)
@@ -5966,14 +5993,6 @@ index 0000000..81d829e
 +            {
 +                texture.trim = { x: 0, y: 0, width: imgResource.w, height: imgResource.h, type: 1 };
 +                texture.orig = texture.trim;
-+                sprite.renderParent = this.renderer.view.create({
-+                    t: 'rect',
-+                    parent: parentRenderedObject,
-+                    w: sprite.width,
-+                    h: sprite.height,
-+                    fillColor: 0x00,
-+                });
-+
 +                sprite.tiles = [];  // cache tile
 +                const tp = this._getTilePropeties(sprite, texture);
 +
@@ -8028,6 +8047,192 @@ index 480edc1..b84b5a1 100644
  
  export default function ()
  {
+diff --git a/src/mesh/Mesh.js b/src/mesh/Mesh.js
+index 02c04a0..46f81ba 100644
+--- a/src/mesh/Mesh.js
++++ b/src/mesh/Mesh.js
+@@ -158,6 +158,17 @@ export default class Mesh extends core.Container
+     }
+ 
+     /**
++     * Renders the object using the PXScene renderer
++     *
++     * @private
++     * @param {PIXI.PXSceneRenderer} renderer - The renderer
++     */
++    _renderPXScene(renderer)
++    {
++        renderer.plugins[this.pluginName].render(this);
++    }
++
++    /**
+      * When the texture is updated, this event will fire to update the scale and frame
+      *
+      * @private
+diff --git a/src/mesh/index.js b/src/mesh/index.js
+index 4d1cad6..5847f95 100644
+--- a/src/mesh/index.js
++++ b/src/mesh/index.js
+@@ -4,6 +4,7 @@
+ export { default as Mesh } from './Mesh';
+ export { default as MeshRenderer } from './webgl/MeshRenderer';
+ export { default as CanvasMeshRenderer } from './canvas/CanvasMeshRenderer';
++export { default as PXSceneMeshRenderer } from './pxscene/PXSceneMeshRenderer';
+ export { default as Plane } from './Plane';
+ export { default as NineSlicePlane } from './NineSlicePlane';
+ export { default as Rope } from './Rope';
+diff --git a/src/mesh/pxscene/PXSceneMeshRenderer.js b/src/mesh/pxscene/PXSceneMeshRenderer.js
+new file mode 100644
+index 0000000..65ea540
+--- /dev/null
++++ b/src/mesh/pxscene/PXSceneMeshRenderer.js
+@@ -0,0 +1,146 @@
++import * as core from '../../core';
++import { Point } from '../../core/math';
++
++/**
++ * PXScene renderer plugin for mesh
++ *
++ * @class
++ * @memberof PIXI
++ * @extends PIXI.ObjectRenderer
++ */
++export default class PXSceneMeshRenderer extends core.ObjectRenderer
++{
++
++    /**
++     * constructor for renderer
++     *
++     * @param {PXSceneRenderer} renderer The renderer this mesh awesomeness works for.
++     */
++    constructor(renderer)
++    {
++        super(renderer);
++        this._resourceLoaded = false;
++    }
++
++    /**
++     * clone array
++     *
++     * @param {Array} arr the js array
++     * @return {Array} the new array
++     */
++    cloneArray(arr)
++    {
++        if (!arr || arr.length <= 0)
++        {
++            return null;
++        }
++
++        const retArray = [];
++
++        for (const i in arr)
++        {
++            retArray.push(arr[i]);
++        }
++
++        return retArray;
++    }
++
++    /**
++     * renders mesh
++     *
++     * @param {PIXI.mesh.Mesh} mesh mesh instance
++     */
++    render(mesh)
++    {
++        const texture = mesh._texture;
++        const parentRenderedObject = (mesh.parent && mesh.parent.renderedObject) || this.renderer.context;
++        const point = new Point(mesh.x, mesh.y);
++        const globalPoint = mesh.parent.toGlobal(point);
++
++        if (!mesh.renderedObject)
++        {
++            mesh.renderedObject = this.renderer.view.create({
++                t: 'image',
++                type: 'mesh',
++                parent: parentRenderedObject,
++                a: 0,
++            });
++        }
++
++        if (mesh.imageResource && mesh.renderedObject && this._resourceLoaded)
++        {
++            innerRenderMesh.call(this);
++        }
++        else if (!mesh.imageResource)
++        {
++            const imageUrl = texture.baseTexture.source.src;
++
++            mesh.imageResource = this.renderer.view.create({
++                t: 'imageResource',
++                url: imageUrl,
++            });
++
++            mesh.imageResource.ready.then((imgResource) =>
++            {
++                texture.baseTexture.source = {
++                    width: imgResource.w,
++                    height: imgResource.h,
++                    src: imageUrl,
++                };
++                texture.baseTexture._sourceLoaded();
++                texture.baseTexture.emit('loaded', texture.baseTexture);
++                mesh._onTextureUpdate();
++                mesh.renderedObject.resource = imgResource;
++                this._resourceLoaded = true;
++                innerRenderMesh.call(this);
++            });
++        }
++
++        function innerRenderMesh()
++        {
++            const renderedObject = mesh.renderedObject;
++            const attributes = this._calcMeshAttributes(globalPoint, mesh.width, mesh.height, mesh);
++
++            renderedObject.uvs = this.cloneArray(mesh.uvs);
++            renderedObject.vertices = this.cloneArray(mesh.vertices);
++
++            renderedObject.x = attributes.x;
++            renderedObject.y = attributes.y;
++            renderedObject.a = attributes.a;
++            renderedObject.r = attributes.r;
++            renderedObject.sx = attributes.sx;
++            renderedObject.sy = attributes.sy;
++        }
++    }
++
++    /**
++     * Calculate mesh attribute.
++     *
++     * @param {Point} globalPoint - Global Point of the mesh
++     * @param {Number} w - The width of the mesh
++     * @param {Number} h - The height of the mesh
++     * @param {Object} mesh - The mesh object
++     * @return {Object} The calculated attributes.
++     * @private
++     */
++    _calcMeshAttributes(globalPoint, w, h, mesh)
++    {
++        const x = globalPoint.x;
++        const y = globalPoint.y;
++        const a = mesh.alpha;
++        const r = mesh.rotation * (180 / Math.PI);
++        const sx = mesh.scale.x;
++        const sy = mesh.scale.y;
++
++        return {
++            x,
++            y,
++            a,
++            r,
++            sx,
++            sy,
++        };
++    }
++}
++
++core.PXSceneRenderer.registerPlugin('mesh', PXSceneMeshRenderer);
 diff --git a/src/particles/ParticleContainer.js b/src/particles/ParticleContainer.js
 index 67796cf..071db1c 100644
 --- a/src/particles/ParticleContainer.js

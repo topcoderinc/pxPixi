@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "express": "~4.13.4",
-    "winston": "~2.2.0"
+    "winston": "~2.4.5"
   },
   "devDependencies": {
     "eslint": "^3.5.0",
